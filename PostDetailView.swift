@@ -1,5 +1,6 @@
 //
 //  PostDetailView.swift
+//  FitSpo
 //
 
 import SwiftUI
@@ -27,16 +28,19 @@ struct PostDetailView: View {
     @State private var isLiked    : Bool
     @State private var likesCount : Int
 
+    // ─── Heart burst for double-tap like ────────
+    @State private var showHeartBurst = false      // ★ NEW
+
     // ─── Comments ───────────────────────────────
     @State private var commentCount : Int = 0
-    @State private var showComments = false      // ← toggles overlay
+    @State private var showComments = false
 
     // ─── Share / DM ─────────────────────────────
     @State private var showShareSheet = false
     @State private var shareChat: Chat?
     @State private var navigateToChat = false
 
-    // MARK: – Init from Post
+    // MARK: – Init
     init(post: Post) {
         self.post = post
         _isLiked    = State(initialValue: post.isLiked)
@@ -45,11 +49,11 @@ struct PostDetailView: View {
 
     // MARK: – Body
     var body: some View {
-        ZStack(alignment: .bottom) {                         // ← NEW ZStack
+        ZStack(alignment: .bottom) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
-                    postImage
+                    postImage                // ★ contains double-tap logic
                     actionRow
                     captionRow
                     timestampRow
@@ -57,17 +61,13 @@ struct PostDetailView: View {
                 }
                 .padding(.top)
             }
-            .navigationBarTitleDisplayMode(.inline)
 
-            if showComments {                                // ← Overlay
-                CommentsOverlay(post: post,
-                                isPresented: $showComments)
+            if showComments {
+                CommentsOverlay(post: post, isPresented: $showComments)
                     .transition(.move(edge: .bottom))
             }
         }
-        .animation(.easeInOut, value: showComments)          // smooth slide
-
-        // ── Delete button for owner ─────────────
+        .animation(.easeInOut, value: showComments)
         .toolbar {
             if post.userId == Auth.auth().currentUser?.uid {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -75,14 +75,10 @@ struct PostDetailView: View {
                 }
             }
         }
-
-        // ── Confirm delete ─────────────────────
         .alert("Delete Post?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive, action: performDelete)
             Button("Cancel", role: .cancel) {}
         }
-
-        // ── Loading overlay ─────────────────────
         .overlay {
             if isDeleting {
                 ProgressView("Deleting…")
@@ -90,16 +86,12 @@ struct PostDetailView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
             }
         }
-
-        // ── Share sheet to pick a user ─────────
         .sheet(isPresented: $showShareSheet) {
             ShareToUserView { selectedUserId in
                 showShareSheet = false
                 sharePost(to: selectedUserId)
             }
         }
-
-        // ── Hidden nav‐link into ChatDetailView ─
         .background(
             Group {
                 if let chat = shareChat {
@@ -111,29 +103,27 @@ struct PostDetailView: View {
                 }
             }
         )
-
         .onAppear {
             fetchAuthor()
             fetchLocationName()
             fetchCommentCount()
         }
+        .navigationTitle("Post")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
-    // ────────────────────────── UI sub-components ──────────────────────────
+    // MARK: – Subviews ------------------------------------------------------
 
-    private var header: some View { /* unchanged – same as before */ HStack(alignment: .top, spacing: 12) {
+    private var header: some View { /* unchanged */ HStack(alignment: .top, spacing: 12) {
             NavigationLink(destination: ProfileView(userId: post.userId)) {
                 avatarView
             }
             VStack(alignment: .leading, spacing: 4) {
                 NavigationLink(destination: ProfileView(userId: post.userId)) {
-                    Text(isLoadingAuthor ? "Loading…" : authorName)
-                        .font(.headline)
+                    Text(isLoadingAuthor ? "Loading…" : authorName).font(.headline)
                 }
                 if !locationName.isEmpty {
-                    Text(locationName)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    Text(locationName).font(.subheadline).foregroundColor(.secondary)
                 }
             }
             Spacer()
@@ -141,28 +131,43 @@ struct PostDetailView: View {
         .padding(.horizontal)
     }
 
-    private var postImage: some View { /* unchanged */ AsyncImage(url: URL(string: post.imageURL)) { phase in
-            switch phase {
-            case .empty:
-                ZStack { Color.gray.opacity(0.2); ProgressView() }
-            case .success(let img):
-                img.resizable().scaledToFit()
-            case .failure:
-                ZStack {
-                    Color.gray.opacity(0.2)
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundColor(.white.opacity(0.7))
+    // ★ POST IMAGE with double-tap like + heart burst
+    private var postImage: some View {
+        ZStack {
+            AsyncImage(url: URL(string: post.imageURL)) { phase in
+                switch phase {
+                case .empty:
+                    ZStack { Color.gray.opacity(0.2); ProgressView() }
+                case .success(let img):
+                    img.resizable().scaledToFit()
+                case .failure:
+                    ZStack {
+                        Color.gray.opacity(0.2)
+                        Image(systemName: "photo")
+                            .font(.largeTitle)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                @unknown default: EmptyView()
                 }
-            @unknown default: EmptyView()
             }
+            .contentShape(Rectangle())                      // full-tap area
+            .gesture(
+                TapGesture(count: 2).onEnded { handleDoubleTapLike() }
+            )
+
+            Image(systemName: "heart.fill")                 // burst overlay
+                .resizable()
+                .foregroundColor(.white)
+                .frame(width: 100, height: 100)
+                .opacity(showHeartBurst ? 1 : 0)
+                .scaleEffect(showHeartBurst ? 1 : 0.3)
+                .animation(.easeOut(duration: 0.35), value: showHeartBurst)
         }
         .frame(maxWidth: .infinity)
         .clipped()
     }
 
     private var actionRow: some View { HStack(spacing: 24) {
-            // Like
             Button(action: toggleLike) {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .font(.title2)
@@ -170,13 +175,11 @@ struct PostDetailView: View {
             }
             Text("\(likesCount)").font(.subheadline).fontWeight(.semibold)
 
-            // Comment
             Button { showComments = true } label: {
                 Image(systemName: "bubble.right").font(.title2)
             }
             Text("\(commentCount)").font(.subheadline).fontWeight(.semibold)
 
-            // DM
             Button { showShareSheet = true } label: {
                 Image(systemName: "paperplane").font(.title2)
             }
@@ -194,13 +197,15 @@ struct PostDetailView: View {
         .padding(.horizontal)
     }
 
-    private var timestampRow: some View { Text(post.timestamp, style: .time)
-        .font(.caption)
-        .foregroundColor(.gray)
-        .padding(.horizontal)
+    private var timestampRow: some View {
+        Text(post.timestamp, style: .time)
+            .font(.caption)
+            .foregroundColor(.gray)
+            .padding(.horizontal)
     }
 
-    @ViewBuilder private var avatarView: some View { Group {
+    @ViewBuilder
+    private var avatarView: some View { Group {
             if let url = URL(string: authorAvatarURL), !authorAvatarURL.isEmpty {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -211,19 +216,31 @@ struct PostDetailView: View {
                     }
                 }
             } else {
-                Image(systemName: "person.crop.circle.fill").resizable().foregroundColor(.gray)
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .foregroundColor(.gray)
             }
         }
         .frame(width: 40, height: 40)
         .clipShape(Circle())
     }
 
-    // ────────────────────────── Actions & helpers ──────────────────────────
+    // MARK: – Actions -------------------------------------------------------
 
     private func toggleLike() {
         isLiked.toggle()
         likesCount += isLiked ? 1 : -1
         NetworkService.shared.toggleLike(post: post) { _ in }
+    }
+
+    private func handleDoubleTapLike() {
+        // visual feedback
+        showHeartBurst = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            showHeartBurst = false
+        }
+        // only toggle if not already liked
+        if !isLiked { toggleLike() }
     }
 
     private func performDelete() {
@@ -238,8 +255,7 @@ struct PostDetailView: View {
 
     private func fetchAuthor() {
         Firestore.firestore()
-            .collection("users")
-            .document(post.userId)
+            .collection("users").document(post.userId)
             .getDocument { snap, err in
                 isLoadingAuthor = false
                 guard err == nil, let d = snap?.data() else { authorName = "Unknown"; return }
@@ -254,8 +270,8 @@ struct PostDetailView: View {
         CLGeocoder().reverseGeocodeLocation(loc) { places, _ in
             guard let place = places?.first else { return }
             var parts = [String]()
-            if let city = place.locality { parts.append(city) }
-            if let region = place.administrativeArea { parts.append(region) }
+            if let city = place.locality               { parts.append(city)    }
+            if let region = place.administrativeArea   { parts.append(region)  }
             if parts.isEmpty, let country = place.country { parts.append(country) }
             locationName = parts.joined(separator: ", ")
         }
@@ -274,9 +290,7 @@ struct PostDetailView: View {
             switch result {
             case .success(let chat):
                 NetworkService.shared.sendPost(chatId: chat.id, postId: post.id) { _ in }
-                DispatchQueue.main.async {
-                    shareChat = chat; navigateToChat = true
-                }
+                DispatchQueue.main.async { shareChat = chat; navigateToChat = true }
             case .failure(let err): print("Chat creation error:", err)
             }
         }
