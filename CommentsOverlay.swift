@@ -1,5 +1,6 @@
 //
 //  CommentsOverlay.swift
+//  FitSpo
 //
 
 import SwiftUI
@@ -10,13 +11,19 @@ struct CommentsOverlay: View {
     let post: Post
     @Binding var isPresented: Bool
 
+    // ─────────────────────── Keyboard helper ───────────────────────
+    @StateObject private var kb = KeyboardResponder()
+
+    // ─────────────────────── Data & state ──────────────────────────
     @State private var comments: [Comment] = []
     @State private var newCommentText = ""
     @FocusState private var isInputActive: Bool
-    @State private var dragOffset: CGFloat = 0            // swipe-to-dismiss
+    @State private var dragOffset: CGFloat = 0        // swipe-to-dismiss offset
 
+    // ─────────────────────── Body ──────────────────────────────────
     var body: some View {
         VStack(spacing: 0) {
+            // Handle / title
             Capsule()
                 .fill(Color.secondary.opacity(0.4))
                 .frame(width: 40, height: 4)
@@ -28,6 +35,7 @@ struct CommentsOverlay: View {
 
             Divider()
 
+            // Comment list
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(comments) { CommentRow(comment: $0) }
@@ -37,12 +45,13 @@ struct CommentsOverlay: View {
             }
             .onTapGesture { isInputActive = false }
 
+            // Input bar
             HStack {
                 TextField("Add a comment…", text: $newCommentText)
                     .textFieldStyle(.roundedBorder)
                     .focused($isInputActive)
 
-                Button { sendComment() } label: {
+                Button(action: sendComment) {
                     Image(systemName: "paperplane.fill")
                         .font(.title3)
                 }
@@ -56,6 +65,7 @@ struct CommentsOverlay: View {
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .offset(y: dragOffset)
+        .padding(.bottom, kb.height)            // ← keeps bar above keyboard
         .gesture(
             DragGesture()
                 .onChanged { value in
@@ -66,12 +76,13 @@ struct CommentsOverlay: View {
                     dragOffset = 0
                 }
         )
+        .animation(.easeInOut, value: kb.height)
         .animation(.easeInOut, value: dragOffset)
         .onAppear(perform: loadComments)
         .ignoresSafeArea(edges: .bottom)
     }
 
-    // ── Networking ─────────────────────────────────────────────────────────
+    // ─────────────────────── Networking ────────────────────────────
     private func loadComments() {
         NetworkService.shared.fetchComments(for: post.id) { result in
             if case .success(let list) = result { comments = list }
@@ -85,31 +96,31 @@ struct CommentsOverlay: View {
         newCommentText = ""
         isInputActive  = false
 
-        // Pull latest profile fields → fall back to Auth profile
-        let userRef = Firestore.firestore().collection("users").document(user.uid)
-        userRef.getDocument { snap, _ in
-            let d      = snap?.data() ?? [:]
-            let name   = (d["displayName"] as? String) ?? user.displayName ?? "User"
-            let avatar = (d["avatarURL"]   as? String) ?? user.photoURL?.absoluteString
+        // Pull latest display name & avatar
+        Firestore.firestore()
+            .collection("users")
+            .document(user.uid)
+            .getDocument { snap, _ in
+                let d      = snap?.data() ?? [:]
+                let name   = (d["displayName"] as? String) ?? user.displayName ?? "User"
+                let avatar = (d["avatarURL"]   as? String) ?? user.photoURL?.absoluteString
 
-            let comment = Comment(
-                postId: post.id,
-                userId: user.uid,
-                username: name,
-                userPhotoURL: avatar,
-                text: text
-            )
+                let comment = Comment(
+                    postId: post.id,
+                    userId: user.uid,
+                    username: name,
+                    userPhotoURL: avatar,
+                    text: text
+                )
 
-            NetworkService.shared.addComment(to: post.id, comment: comment) { _ in
-                loadComments()
+                NetworkService.shared.addComment(to: post.id, comment: comment) { _ in
+                    loadComments()
+                }
             }
-        }
     }
 }
 
-// ──────────────────────────────────────────────────────────────
-// MARK: – Comment Row (look-up profile on first display)
-// ──────────────────────────────────────────────────────────────
+// ─────────────────────── Single comment row ───────────────────────
 
 private struct CommentRow: View {
     let comment: Comment
@@ -117,13 +128,11 @@ private struct CommentRow: View {
     @State private var displayName: String = ""
     @State private var avatarURL  : String?
 
-    // simple in-memory cache so we don’t hit Firestore for each row repeatedly
     private static var cache: [String : (String, String?)] = [:]
 
     var body: some View {
         NavigationLink(destination: ProfileView(userId: comment.userId)) {
             HStack(alignment: .top, spacing: 10) {
-
                 AsyncImage(url: URL(string: avatarURL ?? comment.userPhotoURL ?? "")) { phase in
                     if let img = phase.image { img.resizable() }
                     else { Color.gray.opacity(0.3) }
@@ -139,7 +148,6 @@ private struct CommentRow: View {
                     Text(comment.text)
                         .foregroundColor(.primary)
                 }
-
                 Spacer(minLength: 0)
             }
         }
@@ -147,7 +155,6 @@ private struct CommentRow: View {
         .onAppear(perform: ensureProfileInfo)
     }
 
-    // Pull profile (once) if missing or placeholder
     private func ensureProfileInfo() {
         if let cached = CommentRow.cache[comment.userId] {
             displayName = cached.0
@@ -155,13 +162,11 @@ private struct CommentRow: View {
             return
         }
 
-        if comment.username != "User" && comment.userPhotoURL != nil {
-            // Already good – cache it
+        if comment.username != "User", comment.userPhotoURL != nil {
             CommentRow.cache[comment.userId] = (comment.username, comment.userPhotoURL)
             return
         }
 
-        // Fetch from users collection
         Firestore.firestore()
             .collection("users")
             .document(comment.userId)
