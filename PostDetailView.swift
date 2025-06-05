@@ -12,48 +12,46 @@ struct PostDetailView: View {
     let post: Post
     @Environment(\.dismiss) private var dismiss
 
-    // ─── Author Info ────────────────────────────
+    // ── Author info ─────────────────────────
     @State private var authorName      = ""
     @State private var authorAvatarURL = ""
     @State private var isLoadingAuthor = true
 
-    // ─── Location Name ──────────────────────────
+    // ── Location ───────────────────────────
     @State private var locationName    = ""
 
-    // ─── Delete State ───────────────────────────
-    @State private var isDeleting        = false
-    @State private var showDeleteConfirm = false
-
-    // ─── Like State ─────────────────────────────
+    // ── Like state ─────────────────────────
     @State private var isLiked    : Bool
     @State private var likesCount : Int
+    @State private var showHeartBurst = false
 
-    // ─── Heart burst for double-tap like ────────
-    @State private var showHeartBurst = false      // ★ NEW
-
-    // ─── Comments ───────────────────────────────
+    // ── Comment state ──────────────────────
     @State private var commentCount : Int = 0
     @State private var showComments = false
 
-    // ─── Share / DM ─────────────────────────────
-    @State private var showShareSheet = false
+    // ── Misc. ──────────────────────────────
+    @State private var isDeleting        = false
+    @State private var showDeleteConfirm = false
+    @State private var showShareSheet    = false
     @State private var shareChat: Chat?
     @State private var navigateToChat = false
 
-    // MARK: – Init
+    // live doc listener
+    @State private var postListener: ListenerRegistration?
+
     init(post: Post) {
         self.post = post
         _isLiked    = State(initialValue: post.isLiked)
         _likesCount = State(initialValue: post.likes)
     }
 
-    // MARK: – Body
+    // MARK: — Body ----------------------------------------------------------
     var body: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
-                    postImage                // ★ contains double-tap logic
+                    postImage
                     actionRow
                     captionRow
                     timestampRow
@@ -62,12 +60,21 @@ struct PostDetailView: View {
                 .padding(.top)
             }
 
+            // ── Comments overlay ──
             if showComments {
-                CommentsOverlay(post: post, isPresented: $showComments)
-                    .transition(.move(edge: .bottom))
+                CommentsOverlay(
+                    post: post,
+                    isPresented: $showComments,
+                    onCommentCountChange: { commentCount = $0 }   // live update
+                )
+                .transition(.move(edge: .bottom))
             }
         }
         .animation(.easeInOut, value: showComments)
+        .navigationTitle("Post")
+        .navigationBarTitleDisplayMode(.inline)
+
+        // delete button for owner
         .toolbar {
             if post.userId == Auth.auth().currentUser?.uid {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -104,17 +111,18 @@ struct PostDetailView: View {
             }
         )
         .onAppear {
+            attachPostListener()   // live likes & commentCount
             fetchAuthor()
             fetchLocationName()
-            fetchCommentCount()
+            fetchCommentCount()    // ← ensures 💬 count is right on first load
         }
-        .navigationTitle("Post")
-        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { postListener?.remove() }
     }
 
-    // MARK: – Subviews ------------------------------------------------------
+    // MARK: — Subviews ------------------------------------------------------
 
-    private var header: some View { /* unchanged */ HStack(alignment: .top, spacing: 12) {
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
             NavigationLink(destination: ProfileView(userId: post.userId)) {
                 avatarView
             }
@@ -123,7 +131,9 @@ struct PostDetailView: View {
                     Text(isLoadingAuthor ? "Loading…" : authorName).font(.headline)
                 }
                 if !locationName.isEmpty {
-                    Text(locationName).font(.subheadline).foregroundColor(.secondary)
+                    Text(locationName)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
             }
             Spacer()
@@ -131,7 +141,6 @@ struct PostDetailView: View {
         .padding(.horizontal)
     }
 
-    // ★ POST IMAGE with double-tap like + heart burst
     private var postImage: some View {
         ZStack {
             AsyncImage(url: URL(string: post.imageURL)) { phase in
@@ -150,12 +159,12 @@ struct PostDetailView: View {
                 @unknown default: EmptyView()
                 }
             }
-            .contentShape(Rectangle())                      // full-tap area
+            .contentShape(Rectangle())
             .gesture(
                 TapGesture(count: 2).onEnded { handleDoubleTapLike() }
             )
 
-            Image(systemName: "heart.fill")                 // burst overlay
+            Image(systemName: "heart.fill")
                 .resizable()
                 .foregroundColor(.white)
                 .frame(width: 100, height: 100)
@@ -167,30 +176,38 @@ struct PostDetailView: View {
         .clipped()
     }
 
-    private var actionRow: some View { HStack(spacing: 24) {
+    private var actionRow: some View {
+        HStack(spacing: 24) {
             Button(action: toggleLike) {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .font(.title2)
                     .foregroundColor(isLiked ? .red : .primary)
             }
-            Text("\(likesCount)").font(.subheadline).fontWeight(.semibold)
+            Text("\(likesCount)")
+                .font(.subheadline)
+                .fontWeight(.semibold)
 
             Button { showComments = true } label: {
                 Image(systemName: "bubble.right").font(.title2)
             }
-            Text("\(commentCount)").font(.subheadline).fontWeight(.semibold)
+            Text("\(commentCount)")
+                .font(.subheadline)
+                .fontWeight(.semibold)
 
             Button { showShareSheet = true } label: {
                 Image(systemName: "paperplane").font(.title2)
             }
+
             Spacer()
         }
         .padding(.horizontal)
     }
 
-    private var captionRow: some View { HStack(alignment: .top, spacing: 4) {
+    private var captionRow: some View {
+        HStack(alignment: .top, spacing: 4) {
             NavigationLink(destination: ProfileView(userId: post.userId)) {
-                Text(isLoadingAuthor ? "Loading…" : authorName).fontWeight(.semibold)
+                Text(isLoadingAuthor ? "Loading…" : authorName)
+                    .fontWeight(.semibold)
             }
             Text(post.caption)
         }
@@ -205,7 +222,8 @@ struct PostDetailView: View {
     }
 
     @ViewBuilder
-    private var avatarView: some View { Group {
+    private var avatarView: some View {
+        Group {
             if let url = URL(string: authorAvatarURL), !authorAvatarURL.isEmpty {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -225,7 +243,23 @@ struct PostDetailView: View {
         .clipShape(Circle())
     }
 
-    // MARK: – Actions -------------------------------------------------------
+    // MARK: — Live Firestore listener --------------------------------------
+
+    private func attachPostListener() {
+        guard postListener == nil else { return }
+        let doc = Firestore.firestore().collection("posts").document(post.id)
+        postListener = doc.addSnapshotListener { snap, _ in
+            guard let d = snap?.data() else { return }
+            likesCount   = d["likes"] as? Int ?? likesCount
+            commentCount = d["commentsCount"] as? Int ?? commentCount
+            if let likedBy = d["likedBy"] as? [String],
+               let uid = Auth.auth().currentUser?.uid {
+                isLiked = likedBy.contains(uid)
+            }
+        }
+    }
+
+    // MARK: — Actions -------------------------------------------------------
 
     private func toggleLike() {
         isLiked.toggle()
@@ -234,12 +268,8 @@ struct PostDetailView: View {
     }
 
     private func handleDoubleTapLike() {
-        // visual feedback
         showHeartBurst = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            showHeartBurst = false
-        }
-        // only toggle if not already liked
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showHeartBurst = false }
         if !isLiked { toggleLike() }
     }
 
@@ -253,12 +283,14 @@ struct PostDetailView: View {
         }
     }
 
+    // MARK: — Data fetch helpers -------------------------------------------
+
     private func fetchAuthor() {
         Firestore.firestore()
             .collection("users").document(post.userId)
-            .getDocument { snap, err in
+            .getDocument { snap, _ in
                 isLoadingAuthor = false
-                guard err == nil, let d = snap?.data() else { authorName = "Unknown"; return }
+                let d = snap?.data() ?? [:]
                 authorName      = d["displayName"] as? String ?? "Unknown"
                 authorAvatarURL = d["avatarURL"]   as? String ?? ""
             }
@@ -268,30 +300,33 @@ struct PostDetailView: View {
         guard let lat = post.latitude, let lon = post.longitude else { return }
         let loc = CLLocation(latitude: lat, longitude: lon)
         CLGeocoder().reverseGeocodeLocation(loc) { places, _ in
-            guard let place = places?.first else { return }
+            guard let p = places?.first else { return }
             var parts = [String]()
-            if let city = place.locality               { parts.append(city)    }
-            if let region = place.administrativeArea   { parts.append(region)  }
-            if parts.isEmpty, let country = place.country { parts.append(country) }
+            if let city   = p.locality             { parts.append(city) }
+            if let region = p.administrativeArea   { parts.append(region) }
+            if parts.isEmpty, let country = p.country { parts.append(country) }
             locationName = parts.joined(separator: ", ")
         }
     }
 
     private func fetchCommentCount() {
-        NetworkService.shared.fetchComments(for: post.id) { result in
-            if case .success(let comments) = result { commentCount = comments.count }
+        NetworkService.shared.fetchComments(for: post.id) { res in
+            if case .success(let list) = res { commentCount = list.count }
         }
     }
+
+    // MARK: — Share helper --------------------------------------------------
 
     private func sharePost(to userId: String) {
         guard let me = Auth.auth().currentUser?.uid else { return }
         let pair = [me, userId].sorted()
-        NetworkService.shared.createChat(participants: pair) { result in
-            switch result {
+        NetworkService.shared.createChat(participants: pair) { res in
+            switch res {
             case .success(let chat):
                 NetworkService.shared.sendPost(chatId: chat.id, postId: post.id) { _ in }
                 DispatchQueue.main.async { shareChat = chat; navigateToChat = true }
-            case .failure(let err): print("Chat creation error:", err)
+            case .failure(let err):
+                print("Chat creation error:", err)
             }
         }
     }

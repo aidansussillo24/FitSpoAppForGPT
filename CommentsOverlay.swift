@@ -8,176 +8,156 @@ import FirebaseAuth
 import FirebaseFirestore
 
 struct CommentsOverlay: View {
-    let post: Post
-    @Binding var isPresented: Bool
+  let post: Post
+  @Binding var isPresented: Bool
+  var onCommentCountChange: (Int) -> Void    // ← NEW
 
-    // ─────────────────────── Keyboard helper ───────────────────────
-    @StateObject private var kb = KeyboardResponder()
+  @State private var comments: [Comment] = []
+  @State private var newText = ""
+  @State private var dragOffset: CGFloat = 0
+  @FocusState private var isInputActive: Bool
+  @State private var listener: ListenerRegistration?
 
-    // ─────────────────────── Data & state ──────────────────────────
-    @State private var comments: [Comment] = []
-    @State private var newCommentText = ""
-    @FocusState private var isInputActive: Bool
-    @State private var dragOffset: CGFloat = 0        // swipe-to-dismiss offset
+  @StateObject private var kb = KeyboardResponder()       // ← keyboard helper
 
-    // ─────────────────────── Body ──────────────────────────────────
-    var body: some View {
-        VStack(spacing: 0) {
-            // Handle / title
-            Capsule()
-                .fill(Color.secondary.opacity(0.4))
-                .frame(width: 40, height: 4)
-                .padding(.top, 8)
+  var body: some View {
+    VStack(spacing: 0) {
+      capsuleHeader
+      commentList
+      inputBar
+    }
+    .frame(maxWidth: .infinity)
+    .frame(maxHeight: UIScreen.main.bounds.height * 0.65, alignment: .top)
+    .background(.ultraThinMaterial)
+    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .offset(y: dragOffset)
+    .padding(.bottom, kb.height)                           // ← keep above keyboard
+    .gesture(
+      DragGesture()
+        .onChanged { val in if val.translation.height > 0 { dragOffset = val.translation.height } }
+        .onEnded   { val in if val.translation.height > 100 { isPresented = false }; dragOffset = 0 }
+    )
+    .onAppear  { attachListener() }
+    .onDisappear { listener?.remove() }
+    .ignoresSafeArea(edges: .bottom)
+    .animation(.easeInOut, value: dragOffset)
+  }
 
-            Text("Comments")
-                .font(.headline)
-                .padding(.bottom, 8)
+  // MARK: – Sub-components -------------------------------------------------
 
-            Divider()
+  private var capsuleHeader: some View {
+    VStack(spacing: 8) {
+      Capsule()
+        .fill(Color.secondary.opacity(0.4))
+        .frame(width: 40, height: 4)
+        .padding(.top, 8)
+      Text("Comments").font(.headline)
+      Divider()
+    }
+  }
 
-            // Comment list
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(comments) { CommentRow(comment: $0) }
-                }
-                .padding(.horizontal)
-                .padding(.top, 6)
-            }
-            .onTapGesture { isInputActive = false }
-
-            // Input bar
-            HStack {
-                TextField("Add a comment…", text: $newCommentText)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isInputActive)
-
-                Button(action: sendComment) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.title3)
-                }
-                .disabled(newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding()
-            .background(.thinMaterial)
+  private var commentList: some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 14) {
+          ForEach(comments) { CommentRow(comment: $0) }
         }
-        .frame(maxWidth: .infinity)
-        .frame(maxHeight: UIScreen.main.bounds.height * 0.65, alignment: .top)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .offset(y: dragOffset)
-        .padding(.bottom, kb.height)            // ← keeps bar above keyboard
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    if value.translation.height > 0 { dragOffset = value.translation.height }
-                }
-                .onEnded { value in
-                    if value.translation.height > 100 { isPresented = false }
-                    dragOffset = 0
-                }
-        )
-        .animation(.easeInOut, value: kb.height)
-        .animation(.easeInOut, value: dragOffset)
-        .onAppear(perform: loadComments)
-        .ignoresSafeArea(edges: .bottom)
+        .padding(.horizontal)
+        .padding(.top, 6)
+      }
+      .onChange(of: comments.count) { _ in
+        if let last = comments.last { proxy.scrollTo(last.id, anchor: .bottom) }
+      }
     }
+  }
 
-    // ─────────────────────── Networking ────────────────────────────
-    private func loadComments() {
-        NetworkService.shared.fetchComments(for: post.id) { result in
-            if case .success(let list) = result { comments = list }
-        }
+  private var inputBar: some View {
+    HStack {
+      TextField("Add a comment…", text: $newText)
+        .textFieldStyle(.roundedBorder)
+        .focused($isInputActive)
+      Button {
+        sendComment()
+      } label: {
+        Image(systemName: "paperplane.fill").font(.title3)
+      }
+      .disabled(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
+    .padding()
+    .background(.thinMaterial)
+  }
 
-    private func sendComment() {
-        let text = newCommentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let user = Auth.auth().currentUser else { return }
+  // MARK: – Firestore  listener / send ------------------------------------
 
-        newCommentText = ""
-        isInputActive  = false
+  private func attachListener() {
+    guard listener == nil else { return }
+    listener = Firestore.firestore()
+      .collection("posts").document(post.id)
+      .collection("comments")
+      .order(by: "timestamp")
+      .addSnapshotListener { snap, _ in
+        comments = snap?.documents.compactMap { Comment(from: $0.data()) } ?? []
+        onCommentCountChange(comments.count)               // ← notify parent
+      }
+  }
 
-        // Pull latest display name & avatar
-        Firestore.firestore()
-            .collection("users")
-            .document(user.uid)
-            .getDocument { snap, _ in
-                let d      = snap?.data() ?? [:]
-                let name   = (d["displayName"] as? String) ?? user.displayName ?? "User"
-                let avatar = (d["avatarURL"]   as? String) ?? user.photoURL?.absoluteString
+  private func sendComment() {
+    let text = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, let user = Auth.auth().currentUser else { return }
 
-                let comment = Comment(
-                    postId: post.id,
-                    userId: user.uid,
-                    username: name,
-                    userPhotoURL: avatar,
-                    text: text
-                )
+    newText = ""; isInputActive = false
 
-                NetworkService.shared.addComment(to: post.id, comment: comment) { _ in
-                    loadComments()
-                }
-            }
-    }
+    let comment = Comment(
+      postId: post.id,
+      userId: user.uid,
+      username: user.displayName ?? "User",
+      userPhotoURL: user.photoURL?.absoluteString,
+      text: text
+    )
+    NetworkService.shared.addComment(to: post.id, comment: comment) { _ in /* live listener updates */ }
+  }
 }
 
-// ─────────────────────── Single comment row ───────────────────────
-
+// MARK: – Row with profile fallback
 private struct CommentRow: View {
-    let comment: Comment
+  let comment: Comment
+  @State private var name: String = ""
+  @State private var avatar: String?
 
-    @State private var displayName: String = ""
-    @State private var avatarURL  : String?
+  private static var cache: [String:(String,String?)] = [:]
 
-    private static var cache: [String : (String, String?)] = [:]
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      AsyncImage(url: URL(string: avatar ?? comment.userPhotoURL ?? "")) { phase in
+        if let img = phase.image { img.resizable() } else { Color.gray.opacity(0.3) }
+      }
+      .frame(width: 34, height: 34)
+      .clipShape(Circle())
 
-    var body: some View {
-        NavigationLink(destination: ProfileView(userId: comment.userId)) {
-            HStack(alignment: .top, spacing: 10) {
-                AsyncImage(url: URL(string: avatarURL ?? comment.userPhotoURL ?? "")) { phase in
-                    if let img = phase.image { img.resizable() }
-                    else { Color.gray.opacity(0.3) }
-                }
-                .frame(width: 34, height: 34)
-                .clipShape(Circle())
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(displayName.isEmpty ? comment.username : displayName)
-                        .font(.subheadline).bold()
-                        .foregroundColor(.primary)
-
-                    Text(comment.text)
-                        .foregroundColor(.primary)
-                }
-                Spacer(minLength: 0)
-            }
-        }
-        .buttonStyle(.plain)
-        .onAppear(perform: ensureProfileInfo)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(name.isEmpty ? comment.username : name).font(.subheadline).bold()
+        Text(comment.text)
+      }
+      Spacer(minLength: 0)
     }
+    .onAppear(perform: ensureProfileInfo)
+  }
 
-    private func ensureProfileInfo() {
-        if let cached = CommentRow.cache[comment.userId] {
-            displayName = cached.0
-            avatarURL   = cached.1
-            return
-        }
-
-        if comment.username != "User", comment.userPhotoURL != nil {
-            CommentRow.cache[comment.userId] = (comment.username, comment.userPhotoURL)
-            return
-        }
-
-        Firestore.firestore()
-            .collection("users")
-            .document(comment.userId)
-            .getDocument { snap, _ in
-                let d      = snap?.data() ?? [:]
-                let name   = (d["displayName"] as? String) ?? comment.username
-                let avatar = (d["avatarURL"]   as? String) ?? comment.userPhotoURL
-
-                CommentRow.cache[comment.userId] = (name, avatar)
-                displayName = name
-                avatarURL   = avatar
-            }
+  private func ensureProfileInfo() {
+    if let cached = CommentRow.cache[comment.userId] {
+      name = cached.0; avatar = cached.1; return
     }
+    if comment.username != "User", comment.userPhotoURL != nil {
+      CommentRow.cache[comment.userId] = (comment.username, comment.userPhotoURL)
+      return
+    }
+    Firestore.firestore().collection("users").document(comment.userId)
+      .getDocument { snap, _ in
+        let d = snap?.data() ?? [:]
+        let n = d["displayName"] as? String ?? "User"
+        let a = d["avatarURL"]   as? String
+        CommentRow.cache[comment.userId] = (n, a)
+        name = n; avatar = a
+      }
+  }
 }
