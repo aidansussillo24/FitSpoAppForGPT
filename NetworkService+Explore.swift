@@ -5,36 +5,67 @@
 
 import FirebaseFirestore
 import FirebaseAuth
+import Network          // for reachability helper
 
 extension NetworkService {
 
+    // Returned bundle for paging
     struct TrendingBundle {
         let posts:   [Post]
-        let lastDoc: DocumentSnapshot?   // nil = no further paging
+        let lastDoc: DocumentSnapshot?
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // MARK: - NEW async/await flavour (used by pull-to-refresh)
+    // ────────────────────────────────────────────────────────────────
+    func fetchTrendingPosts(startAfter last: DocumentSnapshot?,
+                            limit: Int = 50) async throws -> TrendingBundle {
+
+        try await withCheckedThrowingContinuation { cont in
+            fetchTrendingPosts(startAfter: last, limit: limit) { res in
+                cont.resume(with: res)
+            }
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // MARK: - Original callback version (kept for other callers)
+    // ────────────────────────────────────────────────────────────────
     func fetchTrendingPosts(startAfter last: DocumentSnapshot? = nil,
                             limit: Int = 50,
                             completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
 
-        trendingQuery(startAfter: last, limit: limit) { firstResult in
-            switch firstResult {
-            case .success(let bundle) where !bundle.posts.isEmpty:
-                completion(.success(bundle))
-
-            default:    // empty or error → fallback to newest
-                self.latestQuery(startAfter: last, limit: limit) { newestResult in
-                    completion(newestResult)
+        trendingQuery(startAfter: last, limit: limit) { first in
+            switch first {
+            case .success(let b) where !b.posts.isEmpty:
+                completion(.success(b))               // trending has results
+            default:
+                // 0 docs or error → fallback to newest
+                self.latestQuery(startAfter: last, limit: limit) { newest in
+                    completion(newest)
                 }
             }
         }
     }
 
-    // ────────── private helpers ──────────
+    // ────────────────────────────────────────────────────────────────
+    // MARK: - Simple reachability flag (used by cold start)
+    // ────────────────────────────────────────────────────────────────
+    static let isOnline: Bool = {
+        let monitor = NWPathMonitor()
+        var online  = true
+        monitor.pathUpdateHandler = { online = $0.status == .satisfied }
+        monitor.start(queue: DispatchQueue(label: "reachability"))
+        return online
+    }()
+}
 
-    private func trendingQuery(startAfter last: DocumentSnapshot?,
-                               limit: Int,
-                               completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
+// MARK: - Private helpers
+private extension NetworkService {
+
+    func trendingQuery(startAfter last: DocumentSnapshot?,
+                       limit: Int,
+                       completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
 
         let past = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
         var q: Query = Firestore.firestore()
@@ -49,9 +80,9 @@ extension NetworkService {
         }
     }
 
-    private func latestQuery(startAfter last: DocumentSnapshot?,
-                             limit: Int,
-                             completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
+    func latestQuery(startAfter last: DocumentSnapshot?,
+                     limit: Int,
+                     completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
 
         var q: Query = Firestore.firestore()
             .collection("posts")
@@ -64,8 +95,8 @@ extension NetworkService {
         }
     }
 
-    // Map snapshot → bundle, but store `lastDoc` only if it has a `likes` field
-    private func mapResult(snapshot snap: QuerySnapshot?, error err: Error?)
+    // snapshot → [Post]  (includes temp mapping) + safe lastDoc
+    func mapResult(snapshot snap: QuerySnapshot?, error err: Error?)
         -> Result<TrendingBundle,Error> {
 
         if let err { return .failure(err) }
@@ -80,7 +111,7 @@ extension NetworkService {
                 let userId   = d["userId"]    as? String,
                 let imageURL = d["imageURL"]  as? String,
                 let caption  = d["caption"]   as? String,
-                let likes    = d["likes"]     as? Int,      // ensure field exists
+                let likes    = d["likes"]     as? Int,
                 let ts       = d["timestamp"] as? Timestamp
             else { return nil }
 
@@ -94,11 +125,12 @@ extension NetworkService {
                 likes:     likes,
                 isLiked:   me.map { likedBy.contains($0) } ?? false,
                 latitude:  d["latitude"]  as? Double,
-                longitude: d["longitude"] as? Double
+                longitude: d["longitude"] as? Double,
+                temp:      d["temp"]      as? Double
             )
         }
 
-        // safe cursor: only keep if likes field exists
+        // use last doc only if it contains the 'likes' field (avoids cursor error)
         let tail = snap.documents.last
         let safeLast = (tail?.data()["likes"] != nil) ? tail : nil
 
