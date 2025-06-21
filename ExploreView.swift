@@ -1,7 +1,8 @@
-//
-//  ExploreView.swift
+//  Replace file: ExploreView.swift
 //  FitSpo
 //
+//  Phase 2.3 – hashtag filtering + full account-list mode
+//  (works with the client-side search above).
 
 import SwiftUI
 import FirebaseFirestore
@@ -9,32 +10,43 @@ import FirebaseAuth
 
 struct ExploreView: View {
 
-    // ─── Grid layout ──────────────────────────────────────────────
     private let spacing: CGFloat = 2
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 120), spacing: spacing)]
     }
 
-    // ─── Data & UI state ──────────────────────────────────────────
+    // ────────── State ──────────
     @State private var allPosts:  [Post] = []
     @State private var posts:     [Post] = []
-    @State private var listeners: [ListenerRegistration] = []
-    @State private var lastSnapshot: DocumentSnapshot?
-    @State private var isLoading = false
+    @State private var lastDoc:   DocumentSnapshot?
+    @State private var isLoading  = false
 
-    @State private var searchText   = ""
+    @State private var trendingTags: [String] = []
+
+    // search
+    @State private var searchText = ""
+    @State private var accountHits: [UserLite] = []
+    @State private var isSearchingAccounts = false
+
+    // chips / filters
     @State private var selectedChip = "All"
     private let chips = ["All", "Men", "Women", "Street", "Formal"]
 
-    @State private var filter      = ExploreFilter()   // season + time only
+    @State private var filter      = ExploreFilter()
     @State private var showFilters = false
 
+    private var isAccountMode: Bool {
+        !searchText.isEmpty && searchText.first != "#"
+    }
+
+    // ────────── Body ──────────
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     chipRow
-                    grid
+                    trendingTagsRow
+                    if isAccountMode { accountResultsList } else { grid }
                 }
             }
             .navigationTitle("Explore")
@@ -44,80 +56,88 @@ struct ExploreView: View {
                         .onTapGesture { showFilters = true }
                 }
             }
-            .searchable(text: $searchText,
-                        placement: .navigationBarDrawer(displayMode: .automatic))
-            .onChange(of: searchText)   { _ in applyFilter() }
-            .onChange(of: selectedChip) { _ in applyFilter() }
-            .onChange(of: filter)       { _ in applyFilter() }
             .sheet(isPresented: $showFilters) {
                 ExploreFilterSheet(filter: $filter)
                     .presentationDetents([.fraction(0.45)])
             }
+            .searchable(text: $searchText,
+                        prompt: "Search accounts or #tags")
+            .onChange(of: searchText,  perform: handleSearchChange)
+            .onChange(of: selectedChip) { _ in applyFilter() }
+            .onChange(of: filter)       { _ in applyFilter() }
             .refreshable { await reload(clear: true) }
-            .task { await coldStart() }
-            .onDisappear { listeners.forEach { $0.remove() }; listeners.removeAll() }
+            .task        { await coldStart() }
         }
     }
 
-    // MARK: – Cold-start helper (waits until online then loads)
+    // ────────── Load helpers ──────────
     private func coldStart() async {
-        while !NetworkService.isOnline { try? await Task.sleep(for: .seconds(1)) }
+        while !NetworkService.isOnline {
+            try? await Task.sleep(for: .seconds(1))
+        }
         await reload(clear: true)
     }
 
-    // MARK: – Networking & paging
-    @MainActor
     private func reload(clear: Bool) async {
-
-        // Skip proactive fetch if offline; coldStart will retry
-        guard NetworkService.isOnline else {
-            await coldStart(); return
-        }
-        guard !isLoading else { return }
+        if isLoading { return }
+        if clear { allPosts.removeAll(); lastDoc = nil }
         isLoading = true
-
-        if clear {
-            listeners.forEach { $0.remove() }; listeners.removeAll()
-            allPosts.removeAll(); posts.removeAll()
-            lastSnapshot = nil
-        }
+        defer { isLoading = false }
 
         do {
             let bundle = try await NetworkService.shared
-                .fetchTrendingPosts(startAfter: lastSnapshot)
+                .fetchTrendingPosts(startAfter: lastDoc)
+            lastDoc = bundle.lastDoc
             allPosts.append(contentsOf: bundle.posts)
-            lastSnapshot = bundle.lastDoc
-            attachLikeListeners(for: bundle.posts)
+            computeTrendingTags()
             applyFilter()
         } catch {
             print("Explore fetch error:", error.localizedDescription)
         }
-
-        isLoading = false
     }
 
     private func loadMoreIfNeeded() async {
-        guard !isLoading, lastSnapshot != nil else { return }
+        guard !isLoading, lastDoc != nil, !isAccountMode else { return }
         await reload(clear: false)
     }
 
-    private func attachLikeListeners(for newPosts: [Post]) {
-        for post in newPosts {
-            guard let idx = allPosts.firstIndex(where: { $0.id == post.id }) else { continue }
-            let l = Firestore.firestore().collection("posts").document(post.id)
-                .addSnapshotListener { snap, _ in
-                    guard let d = snap?.data() else { return }
-                    allPosts[idx].likes = d["likes"] as? Int ?? allPosts[idx].likes
-                    let me = Auth.auth().currentUser?.uid ?? ""
-                    let likedBy = d["likedBy"] as? [String] ?? []
-                    allPosts[idx].isLiked = likedBy.contains(me)
-                    applyFilter()
-                }
-            listeners.append(l)
+    // ────────── Trending tags ──────────
+    private func computeTrendingTags() {
+        let sevenDaysAgo =
+        Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+
+        var freq: [String:Int] = [:]
+        for p in allPosts where p.timestamp >= sevenDaysAgo {
+            for tag in p.hashtags { freq[tag, default: 0] += 1 }
+        }
+        trendingTags = freq
+            .sorted { $0.value > $1.value }
+            .prefix(12)
+            .map { $0.key }
+    }
+
+    // ────────── Search callbacks ──────────
+    private func handleSearchChange(_ q: String) {
+        Task { await queryAccounts() }
+        applyFilter()
+    }
+
+    private func queryAccounts() async {
+        guard isAccountMode else { accountHits = []; return }
+        if isSearchingAccounts { return }
+
+        isSearchingAccounts = true
+        defer { isSearchingAccounts = false }
+
+        do {
+            accountHits = try await NetworkService.shared
+                .searchUsers(prefix: searchText)
+        } catch {
+            accountHits = []
         }
     }
 
-    // MARK: – UI sub-views -------------------------------------------------
+    // ────────── UI pieces ──────────
     private var chipRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -126,8 +146,11 @@ struct ExploreView: View {
                         .font(.subheadline)
                         .padding(.vertical, 6)
                         .padding(.horizontal, 12)
-                        .background(selectedChip == chip ? Color.blue : Color(.systemGray5))
-                        .foregroundColor(selectedChip == chip ? .white : .primary)
+                        .background(selectedChip == chip
+                                    ? Color.blue
+                                    : Color(.systemGray5))
+                        .foregroundColor(selectedChip == chip
+                                         ? .white : .primary)
                         .clipShape(Capsule())
                         .onTapGesture { selectedChip = chip }
                 }
@@ -137,28 +160,73 @@ struct ExploreView: View {
         .padding(.vertical, 6)
     }
 
+    private var trendingTagsRow: some View {
+        Group {
+            if !trendingTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(trendingTags, id: \.self) { tag in
+                            Text("#\(tag)")
+                                .font(.subheadline)
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 12)
+                                .background(Color(.systemGray5))
+                                .clipShape(Capsule())
+                                .onTapGesture { searchText = "#"+tag }
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                }
+                .padding(.bottom, 6)
+            }
+        }
+    }
+
+    private var accountResultsList: some View {
+        VStack(spacing: 0) {
+            if isSearchingAccounts {
+                ProgressView().padding(.top, 40)
+            } else if accountHits.isEmpty {
+                Text("No accounts found")
+                    .foregroundColor(.secondary)
+                    .padding(.top, 40)
+            } else {
+                ForEach(accountHits) { u in
+                    NavigationLink { ProfileView(userId: u.id) } label: {
+                        AccountRow(user: u)
+                    }
+                    Divider()
+                }
+            }
+        }
+        .padding(.horizontal)
+    }
+
     private var grid: some View {
         LazyVGrid(columns: columns, spacing: spacing) {
             ForEach(posts) { post in
-                NavigationLink { PostDetailView(post: post) } label: { Tile(post: post) }
-                    .onAppear {
-                        if post.id == posts.last?.id { Task { await loadMoreIfNeeded() } }
+                NavigationLink { PostDetailView(post: post) } label: {
+                    ImageTile(url: post.imageURL)
+                }
+                .onAppear {
+                    if post.id == posts.last?.id {
+                        Task { await loadMoreIfNeeded() }
                     }
+                }
             }
         }
         .padding(.horizontal, spacing / 2)
         .padding(.bottom, spacing)
     }
 
-    // MARK: – Filtering (no temp section) ----------------------------------
+    // ────────── Filtering ──────────
     private func applyFilter() {
         var filtered = allPosts
 
-        // season
-        if let s = filter.season {
-            filtered = filtered.filter {
-                let m = Calendar.current.component(.month, from: $0.timestamp)
-                switch s {
+        if let season = filter.season {
+            filtered = filtered.filter { p in
+                let m = Calendar.current.component(.month, from: p.timestamp)
+                switch season {
                 case .spring: return (3...5).contains(m)
                 case .summer: return (6...8).contains(m)
                 case .fall:   return (9...11).contains(m)
@@ -167,11 +235,10 @@ struct ExploreView: View {
             }
         }
 
-        // time-band
-        if let t = filter.timeBand {
-            filtered = filtered.filter {
-                let h = Calendar.current.component(.hour, from: $0.timestamp)
-                switch t {
+        if let band = filter.timeBand {
+            filtered = filtered.filter { p in
+                let h = Calendar.current.component(.hour, from: p.timestamp)
+                switch band {
                 case .morning:   return (5..<11).contains(h)
                 case .afternoon: return (11..<17).contains(h)
                 case .evening:   return (17..<21).contains(h)
@@ -180,107 +247,40 @@ struct ExploreView: View {
             }
         }
 
-        // caption chip
         if selectedChip != "All" {
-            filtered = filtered.filter { $0.caption.localizedCaseInsensitiveContains(selectedChip) }
+            let chip = selectedChip.lowercased()
+            filtered = filtered.filter { $0.hashtags.contains(chip) }
         }
 
-        // free-text search
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !q.isEmpty {
-            filtered = filtered.filter {
-                $0.caption.lowercased().contains(q) ||
-                $0.userId.lowercased().contains(q)
-            }
+        if searchText.first == "#" {
+            let tag = searchText.dropFirst().lowercased()
+            filtered = filtered.filter { $0.hashtags.contains(tag) }
         }
 
         posts = filtered
     }
 }
 
-// MARK: – Tile + Shimmer (unchanged) --------------------------------------
-
-private struct Tile: View {
-    let post: Post
-    @State private var avatarURL: String?
-    private static var avatarCache: [String:String] = [:]
-
+// ────────── Grid image tile ──────────
+private struct ImageTile: View {
+    let url: String
     var body: some View {
         GeometryReader { geo in
             let side = geo.size.width
-            ZStack {
-                AsyncImage(url: URL(string: post.imageURL)) { ph in
-                    switch ph {
-                    case .empty:  Color.gray.opacity(0.12).shimmering()
-                    case .success(let img): img.resizable().scaledToFill()
-                    case .failure: Color.gray.opacity(0.12)
-                    @unknown default: Color.gray.opacity(0.12)
-                    }
+            AsyncImage(url: URL(string: url)) { phase in
+                switch phase {
+                case .empty:   Color.gray.opacity(0.12)
+                case .success(let img): img.resizable().scaledToFill()
+                case .failure: Color.gray.opacity(0.12)
+                @unknown default: Color.gray.opacity(0.12)
                 }
-                .frame(width: side, height: side)
-                .clipped()
-
-                // avatar
-                if let url = avatarURL, let u = URL(string: url) {
-                    AsyncImage(url: u) { p in
-                        if let img = p.image { img.resizable() } else { Color.gray.opacity(0.3) }
-                    }
-                    .frame(width: 24, height: 24)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.white, lineWidth: 1))
-                    .padding(6)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                }
-
-                // like badge
-                HStack(spacing: 3) {
-                    Image(systemName: post.isLiked ? "heart.fill" : "heart")
-                        .font(.system(size: 11))
-                        .foregroundColor(post.isLiked ? .red : .white)
-                    Text("\(post.likes)")
-                        .font(.caption2).bold()
-                        .foregroundColor(.white)
-                }
-                .padding(5)
-                .background(.black.opacity(0.35))
-                .clipShape(Capsule())
-                .padding(6)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
             .frame(width: side, height: side)
+            .clipped()
             .cornerRadius(8)
-            .shadow(color: Color.black.opacity(0.15), radius: 2, y: 1)
-            .onAppear(perform: loadAvatar)
         }
         .aspectRatio(1, contentMode: .fit)
     }
-
-    private func loadAvatar() {
-        if let cached = Tile.avatarCache[post.userId] { avatarURL = cached; return }
-        Firestore.firestore().collection("users").document(post.userId)
-            .getDocument { snap, _ in
-                let url = snap?.data()?["avatarURL"] as? String
-                avatarURL = url
-                if let url { Tile.avatarCache[post.userId] = url }
-            }
-    }
 }
 
-fileprivate struct Shimmer: ViewModifier {
-    @State private var shift: CGFloat = -200
-    func body(content: Content) -> some View {
-        content.overlay(
-            LinearGradient(
-                gradient: Gradient(colors: [.clear, .white.opacity(0.55), .clear]),
-                startPoint: .top, endPoint: .bottom)
-            .rotationEffect(.degrees(30))
-            .offset(x: shift)
-        )
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                shift = 350
-            }
-        }
-    }
-}
-private extension View { func shimmering() -> some View { modifier(Shimmer()) } }
+//  End of file

@@ -1,3 +1,4 @@
+
 import SwiftUI
 
 /// Swaps between Sign In and Sign Up screens

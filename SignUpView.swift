@@ -1,92 +1,105 @@
+//  Replace file: SignUpView.swift
+//  FitSpo
+//
+//  Adds username-format validation (letters & numbers only, 3-24 chars).
+//  Shows an inline error and disables the “Sign Up” button until the
+//  username, email, and password all pass validation.
+
 import SwiftUI
-import FirebaseAuth
 
 struct SignUpView: View {
-    @State private var email        = ""
-    @State private var password     = ""
-    @State private var errorMessage: String?
-    @State private var isLoading    = false
-    @Environment(\.dismiss) private var dismiss
+
+    // MARK: – Form fields
+    @State private var email:       String = ""
+    @State private var password:    String = ""
+    @State private var displayName: String = ""
+    @State private var username:    String = ""
+
+    // MARK: – UI state
+    @State private var isLoading   = false
+    @State private var errorMsg:   String?
+
+    // MARK: – Regex helpers
+    private let usernamePattern = "^[A-Za-z0-9]{3,24}$"
+    private var usernameIsValid: Bool {
+        NSPredicate(format: "SELF MATCHES %@", usernamePattern)
+            .evaluate(with: username)
+    }
+    private var passwordIsValid: Bool { password.count >= 6 }
+    private var emailIsValid:    Bool { email.contains("@") }
+
+    private var formIsValid: Bool {
+        usernameIsValid && passwordIsValid && emailIsValid
+    }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 16) {
+
             TextField("Email", text: $email)
-                .autocapitalization(.none)
+                .textInputAutocapitalization(.never)
                 .keyboardType(.emailAddress)
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .cornerRadius(8)
+                .textFieldStyle(.roundedBorder)
 
-            SecureField("Password", text: $password)
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .cornerRadius(8)
+            SecureField("Password (min 6)", text: $password)
+                .textFieldStyle(.roundedBorder)
 
-            if let error = errorMessage {
-                Text(error)
+            TextField("Display Name", text: $displayName)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("Username (letters & numbers only)",
+                      text: $username)
+                .textInputAutocapitalization(.never)
+                .textFieldStyle(.roundedBorder)
+                .overlay(alignment: .trailing) {
+                    if !username.isEmpty {
+                        Image(systemName: usernameIsValid
+                              ? "checkmark.circle.fill"
+                              : "xmark.octagon.fill")
+                            .foregroundColor(usernameIsValid
+                                             ? .green : .red)
+                            .padding(.trailing, 8)
+                    }
+                }
+
+            if let err = errorMsg {
+                Text(err)
                     .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
             }
 
             Button {
-                signUp()
+                Task { await signUp() }
             } label: {
                 if isLoading {
                     ProgressView()
                 } else {
-                    Text("Create Account")
-                        .bold()
+                    Text("Sign Up")
                         .frame(maxWidth: .infinity)
                 }
             }
-            .disabled(isLoading || email.isEmpty || password.isEmpty)
-            .padding()
-            .background(Color.blue)
-            .foregroundColor(.white)
-            .cornerRadius(8)
-
-            Spacer()
+            .disabled(!formIsValid || isLoading)
+            .buttonStyle(.borderedProminent)
         }
         .padding()
+        .navigationTitle("Create Account")
     }
 
-    private func signUp() {
-        isLoading    = true
-        errorMessage = nil
+    // MARK: – Sign-up logic
+    private func signUp() async {
+        errorMsg = nil
+        guard formIsValid else { return }
 
-        Auth.auth().createUser(withEmail: email, password: password) { result, authError in
-            if let authError = authError {
-                self.errorMessage = authError.localizedDescription
-                self.isLoading    = false
-                return
-            }
-            guard let user = result?.user else {
-                self.errorMessage = "Unknown error creating user."
-                self.isLoading    = false
-                return
-            }
+        isLoading = true
+        defer { isLoading = false }
 
-            // initialize an empty profile
-            let profileData: [String:Any] = [
-                "displayName": "",
-                "bio":         "",
-                "avatarURL":   "",
-                "createdAt":   Date()
-            ]
-
-            NetworkService.shared.createUserProfile(
-                userId: user.uid,
-                data:   profileData
-            ) { firestoreResult in
-                self.isLoading = false
-                switch firestoreResult {
-                case .failure(let err):
-                    self.errorMessage = err.localizedDescription
-                case .success:
-                    // on success, go back to Sign In
-                    dismiss()
-                }
-            }
+        do {
+            try await AuthViewModel.shared
+                .createUser(email: email,
+                            password: password,
+                            displayName: displayName,
+                            username: username)
+            // success → dismiss view
+        } catch {
+            errorMsg = error.localizedDescription
         }
     }
 }

@@ -6,10 +6,9 @@
 import Foundation
 import CoreLocation
 
-/// App-wide model of a single post.
 struct Post: Identifiable, Codable {
 
-    // ── Core fields ─────────────────────────────────────────────
+    // core
     let id:        String
     let userId:    String
     let imageURL:  String
@@ -18,20 +17,27 @@ struct Post: Identifiable, Codable {
     var likes:     Int
     var isLiked:   Bool
 
-    // ── Optional geo + weather ─────────────────────────────────
+    // geo / weather
     let latitude:  Double?
     let longitude: Double?
-    var  temp:     Double?        // 🌡 new (℃)
+    var  temp:     Double?
 
-    /// Convenience for MapKit annotation
+    // outfit
+    var outfitItems: [OutfitItem]? = nil
+    var outfitTags : [OutfitTag]?  = nil        // ← NEW
+
+    // hashtags
+    var hashtags: [String]
+
+    // convenience
     var coordinate: CLLocationCoordinate2D? {
-        guard let lat = latitude, let lng = longitude else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        guard let lat = latitude, let lon = longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 
-    // ── CodingKeys keeps Firestore ↔︎ Swift names aligned ──────
     enum CodingKeys: String, CodingKey {
         case id, userId, imageURL, caption, timestamp, likes, isLiked
-        case latitude, longitude, temp
+        case latitude, longitude, temp, hashtags
+        case outfitItems, outfitTags
     }
 }

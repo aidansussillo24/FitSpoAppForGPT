@@ -1,3 +1,8 @@
+//
+//  PostCardView.swift
+//  FitSpo
+//
+
 import SwiftUI
 import FirebaseFirestore
 
@@ -11,19 +16,14 @@ struct PostCardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ─── Tap Image → Post Detail ─────────────────────
+            // ── Tap image → PostDetail ─────────────────────────────
             NavigationLink(destination: PostDetailView(post: post)) {
                 AsyncImage(url: URL(string: post.imageURL)) { phase in
                     switch phase {
                     case .empty:
-                        ZStack {
-                            Color.gray.opacity(0.2)
-                            ProgressView()
-                        }
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()       // ← preserves image’s natural height
+                        ZStack { Color.gray.opacity(0.2); ProgressView() }
+                    case .success(let img):
+                        img.resizable().scaledToFit()
                     case .failure:
                         ZStack {
                             Color.gray.opacity(0.2)
@@ -31,27 +31,25 @@ struct PostCardView: View {
                                 .font(.largeTitle)
                                 .foregroundColor(.white.opacity(0.7))
                         }
-                    @unknown default:
-                        EmptyView()
+                    @unknown default: EmptyView()
                     }
                 }
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(.plain)
 
-            // ─── Footer: Tap → Profile (excluding heart) ─────
+            // ── Footer (avatar, name, like button) ─────────────────
             HStack(spacing: 8) {
                 NavigationLink(destination: ProfileView(userId: post.userId)) {
                     HStack(spacing: 8) {
+                        // avatar
                         if let url = URL(string: authorAvatarURL),
                            !authorAvatarURL.isEmpty
                         {
                             AsyncImage(url: url) { phase in
                                 switch phase {
-                                case .empty:     ProgressView()
+                                case .empty: ProgressView()
                                 case .success(let img):
-                                    img
-                                        .resizable()
-                                        .scaledToFill()
+                                    img.resizable().scaledToFill()
                                 case .failure:
                                     Image(systemName: "person.crop.circle.fill")
                                         .resizable()
@@ -74,7 +72,7 @@ struct PostCardView: View {
                             .truncationMode(.tail)
                     }
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
 
                 Spacer()
 
@@ -84,31 +82,30 @@ struct PostCardView: View {
                         Text("\(post.likes)")
                     }
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
             }
             .padding(8)
             .background(Color.white)
         }
         .background(Color.white)
         .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.05),
-                radius: 4, x: 0, y: 2)
+        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
         .onAppear(perform: fetchAuthor)
     }
 
+    // MARK: – Author fetch
     private func fetchAuthor() {
-        let db = Firestore.firestore()
-        db.collection("users")
-          .document(post.userId)
-          .getDocument { snap, err in
-            isLoadingAuthor = false
-            guard err == nil, let data = snap?.data() else {
-                authorName = "Unknown"
-                return
+        Firestore.firestore()
+            .collection("users")
+            .document(post.userId)
+            .getDocument { snap, err in
+                isLoadingAuthor = false
+                guard err == nil, let d = snap?.data() else {
+                    authorName = "Unknown"; return
+                }
+                authorName      = d["displayName"] as? String ?? "Unknown"
+                authorAvatarURL = d["avatarURL"]   as? String ?? ""
             }
-            authorName      = data["displayName"] as? String ?? "Unknown"
-            authorAvatarURL = data["avatarURL"]   as? String ?? ""
-        }
     }
 }
 
@@ -120,12 +117,14 @@ struct PostCardView_Previews: PreviewProvider {
                 id:        "1",
                 userId:    "alice",
                 imageURL:  "https://via.placeholder.com/400x600",
-                caption:   "",
+                caption:   "Preview card",
                 timestamp: Date(),
                 likes:     42,
                 isLiked:   false,
                 latitude:  nil,
-                longitude: nil
+                longitude: nil,
+                temp:      nil,
+                hashtags:  []        // ← new param
             ),
             onLike: {}
         )

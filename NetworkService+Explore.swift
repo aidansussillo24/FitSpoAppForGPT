@@ -3,137 +3,99 @@
 //  FitSpo
 //
 
-import FirebaseFirestore
 import FirebaseAuth
-import Network          // for reachability helper
+import FirebaseFirestore
 
 extension NetworkService {
 
-    // Returned bundle for paging
+    // Bundle returned to ExploreView for paging
     struct TrendingBundle {
         let posts:   [Post]
         let lastDoc: DocumentSnapshot?
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // MARK: - NEW async/await flavour (used by pull-to-refresh)
-    // ────────────────────────────────────────────────────────────────
-    func fetchTrendingPosts(startAfter last: DocumentSnapshot?,
-                            limit: Int = 50) async throws -> TrendingBundle {
-
+    // MARK: – async / await API
+    func fetchTrendingPosts(
+        startAfter last: DocumentSnapshot?
+    ) async throws -> TrendingBundle {
         try await withCheckedThrowingContinuation { cont in
-            fetchTrendingPosts(startAfter: last, limit: limit) { res in
-                cont.resume(with: res)
-            }
+            fetchTrendingPosts(startAfter: last) { cont.resume(with: $0) }
         }
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // MARK: - Original callback version (kept for other callers)
-    // ────────────────────────────────────────────────────────────────
-    func fetchTrendingPosts(startAfter last: DocumentSnapshot? = nil,
-                            limit: Int = 50,
-                            completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
+    // MARK: – closure API
+    func fetchTrendingPosts(
+        startAfter last: DocumentSnapshot?,
+        completion: @escaping (Result<TrendingBundle,Error>) -> Void
+    ) {
+        //-------------------------------------------------------------
+        // Choose ordering based on whether the paging cursor has “likes”
+        //-------------------------------------------------------------
+        let needsFallback = (last?.data()?["likes"] == nil)
 
-        trendingQuery(startAfter: last, limit: limit) { first in
-            switch first {
-            case .success(let b) where !b.posts.isEmpty:
-                completion(.success(b))               // trending has results
-            default:
-                // 0 docs or error → fallback to newest
-                self.latestQuery(startAfter: last, limit: limit) { newest in
-                    completion(newest)
-                }
-            }
+        var q: Query = db.collection("posts")
+
+        if needsFallback {
+            q = q.order(by: "timestamp", descending: true)
+        } else {
+            q = q.order(by: "likes",     descending: true)
+                 .order(by: "timestamp", descending: true)
         }
-    }
 
-    // ────────────────────────────────────────────────────────────────
-    // MARK: - Simple reachability flag (used by cold start)
-    // ────────────────────────────────────────────────────────────────
-    static let isOnline: Bool = {
-        let monitor = NWPathMonitor()
-        var online  = true
-        monitor.pathUpdateHandler = { online = $0.status == .satisfied }
-        monitor.start(queue: DispatchQueue(label: "reachability"))
-        return online
-    }()
-}
-
-// MARK: - Private helpers
-private extension NetworkService {
-
-    func trendingQuery(startAfter last: DocumentSnapshot?,
-                       limit: Int,
-                       completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
-
-        let past = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
-        var q: Query = Firestore.firestore()
-            .collection("posts")
-            .whereField("timestamp", isGreaterThan: past)
-            .order(by: "likes", descending: true)
-            .limit(to: limit)
+        q = q.limit(to: 20)
         if let last { q = q.start(afterDocument: last) }
 
-        q.getDocuments { snap, err in
-            completion(self.mapResult(snapshot: snap, error: err))
+        q.getDocuments { [weak self] snap, err in
+            self?.mapSnapshot(snapshot: snap,
+                              error:     err,
+                              completion: completion)
         }
     }
 
-    func latestQuery(startAfter last: DocumentSnapshot?,
-                     limit: Int,
-                     completion: @escaping (Result<TrendingBundle,Error>) -> Void) {
-
-        var q: Query = Firestore.firestore()
-            .collection("posts")
-            .order(by: "timestamp", descending: true)
-            .limit(to: limit)
-        if let last { q = q.start(afterDocument: last) }
-
-        q.getDocuments { snap, err in
-            completion(self.mapResult(snapshot: snap, error: err))
-        }
-    }
-
-    // snapshot → [Post]  (includes temp mapping) + safe lastDoc
-    func mapResult(snapshot snap: QuerySnapshot?, error err: Error?)
-        -> Result<TrendingBundle,Error> {
-
-        if let err { return .failure(err) }
-        guard let snap = snap else {
-            return .success(TrendingBundle(posts: [], lastDoc: nil))
+    // MARK: – Snapshot → Post array
+    private func mapSnapshot(
+        snapshot snap: QuerySnapshot?,
+        error err: Error?,
+        completion: (Result<TrendingBundle,Error>) -> Void
+    ) {
+        if let err { completion(.failure(err)); return }
+        guard let snap else {
+            completion(.failure(NSError(
+                domain: "Explore",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "No snapshot"])))
+            return
         }
 
         let me = Auth.auth().currentUser?.uid
         let posts: [Post] = snap.documents.compactMap { doc in
             let d = doc.data()
             guard
-                let userId   = d["userId"]    as? String,
-                let imageURL = d["imageURL"]  as? String,
-                let caption  = d["caption"]   as? String,
-                let likes    = d["likes"]     as? Int,
-                let ts       = d["timestamp"] as? Timestamp
+                let uid   = d["userId"]    as? String,
+                let url   = d["imageURL"]  as? String,
+                let cap   = d["caption"]   as? String,
+                let ts    = d["timestamp"] as? Timestamp,
+                let likes = d["likes"]     as? Int?
             else { return nil }
 
             let likedBy = d["likedBy"] as? [String] ?? []
+
             return Post(
                 id:        doc.documentID,
-                userId:    userId,
-                imageURL:  imageURL,
-                caption:   caption,
+                userId:    uid,
+                imageURL:  url,
+                caption:   cap,
                 timestamp: ts.dateValue(),
-                likes:     likes,
+                likes:     likes ?? 0,
                 isLiked:   me.map { likedBy.contains($0) } ?? false,
                 latitude:  d["latitude"]  as? Double,
                 longitude: d["longitude"] as? Double,
-                temp:      d["temp"]      as? Double
+                temp:      d["temp"]      as? Double,
+                hashtags:  d["hashtags"]  as? [String] ?? []
             )
         }
 
-        // use last doc only if it contains the 'likes' field (avoids cursor error)
-        let tail = snap.documents.last
-        let safeLast = (tail?.data()["likes"] != nil) ? tail : nil
-
-        return .success(TrendingBundle(posts: posts, lastDoc: safeLast))
+        completion(.success(.init(posts: posts,
+                                  lastDoc: snap.documents.last)))
     }
 }
