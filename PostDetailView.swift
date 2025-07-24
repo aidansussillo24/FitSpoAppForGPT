@@ -61,6 +61,9 @@ struct PostDetailView: View {
     @State private var imgRatio: CGFloat? = nil     // natural h/w
     @State private var faceTags: [UserTag] = []
     @State private var dynamicRank: Int? = nil      // fetched from cache
+    @State private var showHashtagResults = false
+    @State private var currentHashtagQuery: String = ""
+    @State private var isLoadingHashtag = false
 
     init(post: Post, rank: Int? = nil, navTitle: String = "Post") {
         self.post = post
@@ -94,7 +97,10 @@ struct PostDetailView: View {
                 CommentsOverlay(
                     post: post,
                     isPresented: $showComments,
-                    onCommentCountChange: { commentCount = $0 }
+                    onCommentCountChange: { commentCount = $0 },
+                    onHashtagTap: { hashtag in
+                        handleHashtagTap(hashtag)
+                    }
                 )
                 .transition(.move(edge: .bottom))
             }
@@ -118,6 +124,27 @@ struct PostDetailView: View {
         .task { await ensureHotRank() }
         .onAppear   { attachListenersAndFetch() }
         .onDisappear{ postListener?.remove() }
+        .sheet(isPresented: $showHashtagResults) {
+            SearchResultsView(query: currentHashtagQuery)
+        }
+        .overlay {
+            if isLoadingHashtag {
+                Color.black.opacity(0.3)
+                    .overlay {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("Loading hashtag...")
+                                .foregroundColor(.white)
+                                .font(.subheadline)
+                        }
+                        .padding(20)
+                        .background(.ultraThickMaterial)
+                        .cornerRadius(12)
+                    }
+                    .ignoresSafeArea()
+            }
+        }
     }
 
     // MARK: ----------------------------------------------------
@@ -327,7 +354,9 @@ struct PostDetailView: View {
                 Text(isLoadingAuthor ? "Loading…" : authorName)
                     .fontWeight(.semibold)
             }
-            Text(post.caption)
+            ClickableHashtagText(text: post.caption) { hashtag in
+                handleHashtagTap(hashtag)
+            }
         }
         .padding(.horizontal)
     }
@@ -527,6 +556,22 @@ struct PostDetailView: View {
         await HotRankStore.shared.refreshIfNeeded()
         if let r = HotRankStore.shared.rank(for: post.id) {
             dynamicRank = r
+        }
+    }
+
+    private func handleHashtagTap(_ hashtag: String) {
+        isLoadingHashtag = true
+        
+        Task {
+            // Set the query
+            currentHashtagQuery = "#\(hashtag)"
+            
+            // Show loading for a moment to ensure everything is set up
+            try? await Task.sleep(for: .milliseconds(500))
+            
+            // Hide loading and show results
+            isLoadingHashtag = false
+            showHashtagResults = true
         }
     }
 }

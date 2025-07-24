@@ -11,6 +11,7 @@ struct CommentsOverlay: View {
     let post: Post
     @Binding var isPresented: Bool
     var onCommentCountChange: (Int) -> Void
+    var onHashtagTap: ((String) -> Void)? = nil
 
     @State private var comments: [Comment] = []
     @State private var newText  = ""
@@ -71,7 +72,10 @@ struct CommentsOverlay: View {
                             comment: c,
                             isMe: c.userId == myUid,
                             onEdit: { beginEdit(c) },
-                            onDelete: { deleteComment(c) }
+                            onDelete: { deleteComment(c) },
+                            onHashtagTap: { hashtag in
+                                onHashtagTap?(hashtag)
+                            }
                         )
                     }
                 }
@@ -177,6 +181,7 @@ private struct CommentRow: View {
     let isMe: Bool
     var onEdit: () -> Void
     var onDelete: () -> Void
+    var onHashtagTap: (String) -> Void
 
     @State private var name: String = ""
     @State private var avatar: String?
@@ -193,7 +198,9 @@ private struct CommentRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(name.isEmpty ? comment.username : name).font(.subheadline).bold()
-                Text(comment.text)
+                ClickableHashtagText(text: comment.text) { hashtag in
+                    onHashtagTap(hashtag)
+                }
             }
             Spacer(minLength: 0)
         }
