@@ -49,6 +49,7 @@ extension NetworkService {
                 latitude:  d["latitude"]  as? Double,
                 longitude: d["longitude"] as? Double,
                 temp:      d["temp"]      as? Double,
+                weatherIcon: d["weatherIcon"] as? String,
                 hashtags:  d["hashtags"]  as? [String] ?? []     // ← NEW
             )
 

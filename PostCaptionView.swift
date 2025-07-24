@@ -11,6 +11,7 @@ import CoreLocation
 struct PostCaptionView: View {
 
     let image: UIImage
+    var onComplete: (() -> Void)? = nil
 
     // caption & posting
     @State private var caption   = ""
@@ -197,6 +198,6 @@ struct PostCaptionView: View {
 
     private func dismissToRoot() {
         dismiss()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { dismiss() }
+        onComplete?()
     }
 }

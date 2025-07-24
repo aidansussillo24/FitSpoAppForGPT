@@ -2,6 +2,12 @@
 //  PostDetailView.swift
 //  FitSpo
 //
+//  Displays one post, its pins, likes & comments.
+//  *2025-07-01*  • Hot-rank badge redesign: larger circle, gradient,
+//                 bold number overlay for better legibility.
+//  *2025-07-02*  • Auto-detect rank via HotRankStore so badge shows
+//                 on every PostDetailView, not just Hot-Posts feed.
+//
 
 import SwiftUI
 import FirebaseAuth
@@ -14,6 +20,8 @@ struct PostDetailView: View {
 
     // ── injected
     let post: Post
+    let rank: Int?
+    let navTitle: String
     @Environment(\.dismiss) private var dismiss
 
     // ── author
@@ -39,22 +47,25 @@ struct PostDetailView: View {
     // ── delete / report
     @State private var isDeleting = false
     @State private var showDeleteConfirm = false
-    @State private var showReportSheet = false
+    @State private var showReportSheet  = false
 
     // ── outfit pins
     @State private var outfitItems : [OutfitItem]
     @State private var outfitTags  : [OutfitTag]
-    @State private var showPins    = false          // ⇠ default OFF
+    @State private var showPins    = false          // default OFF
     @State private var expandedTag : String? = nil
     @State private var showOutfitSheet = false
 
     // ── misc
     @State private var postListener: ListenerRegistration?
-    @State private var imgRatio: CGFloat? = nil
+    @State private var imgRatio: CGFloat? = nil     // natural h/w
     @State private var faceTags: [UserTag] = []
+    @State private var dynamicRank: Int? = nil      // fetched from cache
 
-    init(post: Post) {
+    init(post: Post, rank: Int? = nil, navTitle: String = "Post") {
         self.post = post
+        self.rank = rank
+        self.navTitle = navTitle
         _isLiked     = State(initialValue: post.isLiked)
         _likesCount  = State(initialValue: post.likes)
         _outfitItems = State(initialValue: post.outfitItems ?? [])
@@ -70,7 +81,7 @@ struct PostDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
-                    postImage
+                    postImage            // <──── fixed-height now
                     actionRow
                     captionRow
                     timestampRow
@@ -89,12 +100,8 @@ struct PostDetailView: View {
             }
         }
         .animation(.easeInOut, value: showComments)
-        .navigationTitle("Post")
+        .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            toolbarDeleteButton
-            toolbarMoreButton
-        }
         .alert("Delete Post?", isPresented: $showDeleteConfirm,
                actions: deleteAlertButtons)
         .overlay { if isDeleting { deletingOverlay } }
@@ -108,6 +115,7 @@ struct PostDetailView: View {
                             isPresented: $showReportSheet)
         }
         .background { chatNavigationLink }
+        .task { await ensureHotRank() }
         .onAppear   { attachListenersAndFetch() }
         .onDisappear{ postListener?.remove() }
     }
@@ -132,27 +140,33 @@ struct PostDetailView: View {
                 }
             }
             Spacer()
+            weatherIconView
         }
         .padding(.horizontal)
     }
 
     // MARK: ----------------------------------------------------
-    // MARK: main image w/ overlays
+    // MARK: main image (height capped at 4:5)
     // MARK: ----------------------------------------------------
     private var postImage: some View {
         GeometryReader { geo in
             if let url = URL(string: post.imageURL) {
+
+                // determine which ratio to display (natural vs capped)
+                let naturalRatio = imgRatio ?? 1                // h / w
+                let displayRatio = min(naturalRatio, 1.25)      // cap at 4:5
+                let displayHeight = UIScreen.main.bounds.width * displayRatio
+
                 ZoomableAsyncImage(url: url, aspectRatio: $imgRatio)
-                    .frame(width: geo.size.width,
-                           height: (imgRatio ?? 1) * geo.size.width)
+                    .frame(width: geo.size.width, height: displayHeight)
                     .clipped()
                     .highPriorityGesture(
                         TapGesture(count: 2).onEnded { handleDoubleTapLike() }
                     )
-                    .overlay { faceTagOverlay(in: geo) }
-                    .overlay { if showPins { outfitPinsOverlay(in: geo) } }
+                    .overlay { faceTagOverlay(in: geo, ratio: displayRatio) }
+                    .overlay { if showPins { outfitPins(in: geo, ratio: displayRatio) } }
                     .overlay(HeartBurstView(trigger: $showHeart))
-                    // shopping‑bag toggle (bottom‑left)
+                    // shopping-bag toggle (bottom-left corner)
                     .overlay(alignment: .bottomLeading) {
                         Button {
                             if outfitItems.isEmpty { showOutfitSheet = true }
@@ -165,15 +179,19 @@ struct PostDetailView: View {
                         }
                         .padding(16)
                     }
+                    // hot rank badge (bottom-right corner)
+                    .overlay(alignment: .bottomTrailing) {
+                        hotBadge
+                    }
             } else {
                 Color.gray.opacity(0.2)
             }
         }
-        .frame(height: UIScreen.main.bounds.width * (imgRatio ?? 1))
+        .frame(height: UIScreen.main.bounds.width * min(imgRatio ?? 1, 1.25))
     }
 
-    // face tags ------------------------------------------------
-    private func faceTagOverlay(in geo: GeometryProxy) -> some View {
+    // MARK: overlays
+    private func faceTagOverlay(in geo: GeometryProxy, ratio: CGFloat) -> some View {
         ForEach(faceTags) { tag in
             NavigationLink(destination: ProfileView(userId: tag.id)) {
                 Text(tag.displayName)
@@ -184,20 +202,18 @@ struct PostDetailView: View {
             .buttonStyle(.plain)
             .position(
                 x: tag.xNorm * geo.size.width,
-                y: tag.yNorm * geo.size.width * (imgRatio ?? 1)
+                y: tag.yNorm * geo.size.width * ratio
             )
         }
     }
 
-    // outfit pins ---------------------------------------------
-    private func outfitPinsOverlay(in geo: GeometryProxy) -> some View {
+    private func outfitPins(in geo: GeometryProxy, ratio: CGFloat) -> some View {
         ForEach(outfitTags) { t in
             if let item = outfitItems.first(where: { $0.id == t.itemId }) {
-
-                let isExpanded = expandedTag == t.id
+                let expanded = expandedTag == t.id
 
                 Group {
-                    if isExpanded {
+                    if expanded {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.label).bold()
                             if !item.brand.isEmpty {
@@ -215,10 +231,8 @@ struct PostDetailView: View {
                             }
                         }
                         .padding(8)
-                        .background(.ultraThickMaterial,
-                                    in: RoundedRectangle(cornerRadius: 8))
+                        .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 8))
                         .onTapGesture { expandedTag = nil }
-
                     } else {
                         Text(item.label)
                             .font(.caption2.weight(.semibold))
@@ -230,15 +244,47 @@ struct PostDetailView: View {
                 .animation(.spring(), value: expandedTag)
                 .position(
                     x: t.xNorm * geo.size.width,
-                    y: t.yNorm * geo.size.width
+                    y: t.yNorm * geo.size.width * ratio
                 )
             }
         }
     }
 
-    // MARK: ----------------------------------------------------
-    // MARK: action row (eye‑button removed)
-    // MARK: ----------------------------------------------------
+    // MARK: – Hot-rank badge  (new design)
+    @ViewBuilder private var hotBadge: some View {
+        if let rank = rank ?? dynamicRank {
+            let size: CGFloat = 36
+
+            ZStack {
+                // gradient background – “heat”
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(red: 1.0, green: 0.62, blue: 0.13),   // #FF9F21
+                                     Color(red: 1.0, green: 0.35, blue: 0.13)],  // #FF5921
+                            startPoint: .topLeading,
+                            endPoint:   .bottomTrailing)
+                    )
+
+                // subtle flame watermark
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 20))
+                    .opacity(0.25)
+                    .foregroundColor(.white)
+
+                // rank number
+                Text("\(rank)")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .shadow(radius: 0.5)
+            }
+            .frame(width: size, height: size)
+            .shadow(color: Color.black.opacity(0.25), radius: 2, y: 1)
+            .padding(16)
+        }
+    }
+
+    // MARK: action row ----------------------------------------
     private var actionRow: some View {
         HStack(spacing: 24) {
             Button(action: toggleLike) {
@@ -256,12 +302,25 @@ struct PostDetailView: View {
             Button { showShareSheet = true } label: {
                 Image(systemName: "paperplane").font(.title2)
             }
+            Menu {
+                if post.userId == Auth.auth().currentUser?.uid {
+                    Button(role: .destructive) { showDeleteConfirm = true } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                } else {
+                    Button(role: .destructive) { showReportSheet = true } label: {
+                        Label("Report", systemImage: "flag")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis").font(.title2)
+            }
             Spacer()
         }
         .padding(.horizontal)
     }
 
-    // MARK: caption & time rows --------------------------------
+    // MARK: caption / time rows --------------------------------
     private var captionRow: some View {
         HStack(alignment: .top, spacing: 4) {
             NavigationLink(destination: ProfileView(userId: post.userId)) {
@@ -283,14 +342,12 @@ struct PostDetailView: View {
     // MARK: avatar helper --------------------------------------
     @ViewBuilder private var avatarView: some View {
         Group {
-            if let url = URL(string: authorAvatarURL),
-               !authorAvatarURL.isEmpty {
+            if let url = URL(string: authorAvatarURL), !authorAvatarURL.isEmpty {
                 AsyncImage(url: url) { phase in
                     if case .success(let img) = phase {
                         img.resizable().scaledToFill()
                     } else {
-                        Image(systemName: "person.crop.circle.fill")
-                            .resizable()
+                        Image(systemName: "person.crop.circle.fill").resizable()
                     }
                 }
             } else {
@@ -301,6 +358,35 @@ struct PostDetailView: View {
         }
         .frame(width: 40, height: 40)
         .clipShape(Circle())
+    }
+
+    // MARK: weather helper ------------------------------------
+    @ViewBuilder private var weatherIconView: some View {
+        if let name = post.weatherSymbolName {
+            HStack(spacing: 4) {
+                if let temp = post.tempString {
+                    Text(temp)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                }
+
+                if let (primary, secondary) = post.weatherIconColors {
+                    if let secondary = secondary {
+                        Image(systemName: name)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(primary, secondary)
+                    } else {
+                        Image(systemName: name)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(primary)
+                    }
+                } else {
+                    Image(systemName: name)
+                }
+            }
+            .padding(6)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
     }
 
     // MARK: like helpers ---------------------------------------
@@ -324,32 +410,6 @@ struct PostDetailView: View {
             DispatchQueue.main.async {
                 isDeleting = false
                 if case .success = res { dismiss() }
-            }
-        }
-    }
-
-    private var toolbarDeleteButton: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarTrailing) {
-            if post.userId == Auth.auth().currentUser?.uid {
-                Button("Delete", role: .destructive) {
-                    showDeleteConfirm = true
-                }
-            }
-        }
-    }
-
-    private var toolbarMoreButton: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarTrailing) {
-            if post.userId != Auth.auth().currentUser?.uid {
-                Menu {
-                    Button(role: .destructive) {
-                        showReportSheet = true
-                    } label: {
-                        Label("Report", systemImage: "flag")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
             }
         }
     }
@@ -418,7 +478,6 @@ struct PostDetailView: View {
             .document(post.id)
             .addSnapshotListener { snap, _ in
                 guard let d = snap?.data() else { return }
-
                 likesCount   = d["likes"]         as? Int ?? likesCount
                 commentCount = d["commentsCount"] as? Int ?? commentCount
 
@@ -447,9 +506,7 @@ struct PostDetailView: View {
         guard let lat = post.latitude, let lon = post.longitude else { return }
         let loc = CLLocation(latitude: lat, longitude: lon)
         CLGeocoder().reverseGeocodeLocation(loc) { places, _ in
-            guard let p = places?.first else { return }
-            locationName = [p.locality, p.administrativeArea, p.country]
-                .compactMap { $0 }.first ?? ""
+            locationName = places?.first?.locality ?? ""
         }
     }
 
@@ -462,6 +519,14 @@ struct PostDetailView: View {
     private func fetchFaceTags() {
         NetworkService.shared.fetchTags(for: post.id) { res in
             if case .success(let list) = res { faceTags = list }
+        }
+    }
+
+    // Fetch Top‑100 if needed and update dynamicRank
+    private func ensureHotRank() async {
+        await HotRankStore.shared.refreshIfNeeded()
+        if let r = HotRankStore.shared.rank(for: post.id) {
+            dynamicRank = r
         }
     }
 }

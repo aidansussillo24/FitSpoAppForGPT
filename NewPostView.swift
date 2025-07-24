@@ -22,6 +22,7 @@ struct NewPostView: View {
     // Selection
     @State private var selected : PHAsset?
     @State private var preview  : UIImage?
+    @State private var showCropper = false
     @State private var collapsed = false
     @State private var showCaption = false
 
@@ -29,7 +30,8 @@ struct NewPostView: View {
     @StateObject private var locationManager = LocationManager.shared
 
     // Grid
-    private let cols = Array(repeating: GridItem(.flexible(), spacing: 1), count: 3)
+    private var sep: CGFloat { 1 / UIScreen.main.scale }
+    private var cols: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: sep), count: 3) }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -43,6 +45,17 @@ struct NewPostView: View {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFill()
+                            .overlay(alignment: .bottomTrailing) {
+                                Button(action: { showCropper = true }) {
+                                    Image(systemName: "crop")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .padding(6)
+                                        .background(Color.black.opacity(0.6))
+                                        .foregroundColor(.white)
+                                        .clipShape(Circle())
+                                        .padding(6)
+                                }
+                            }
                     } else {
                         Image(systemName: "photo")
                             .font(.system(size: 48))
@@ -52,9 +65,46 @@ struct NewPostView: View {
                 .frame(height: collapsed ? 0 : 300)
                 .clipped()
                 .cornerRadius(12)
+                .overlay(alignment: .top) {
+                    if collapsed && preview != nil {
+                        Image(systemName: "chevron.compact.up")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
+                            .onTapGesture {
+                                withAnimation { collapsed = false }
+                            }
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if preview != nil {
+                        Button(action: { showCropper = true }) {
+                            Image(systemName: "crop")
+                                .font(.system(size: 14, weight: .bold))
+                                .padding(6)
+                                .background(Color.black.opacity(0.6))
+                                .foregroundColor(.white)
+                                .clipShape(Circle())
+                                .padding(6)
+                        }
+                    }
+                }
                 .animation(.easeInOut(duration: 0.25), value: collapsed)
                 .padding(.horizontal)
                 .padding(.top, 8)
+
+                // -------- Library label -----
+                HStack {
+                    Text("Photo Library")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+                .frame(height: collapsed ? 0 : nil)
+                .clipped()
+                .opacity(collapsed ? 0 : 1)
+                .animation(.easeInOut(duration: 0.25), value: collapsed)
 
                 // -------- Grid -------------
                 ScrollView {
@@ -65,7 +115,7 @@ struct NewPostView: View {
                     }
                     .frame(height: 0)
 
-                    LazyVGrid(columns: cols, spacing: 1) {
+                    LazyVGrid(columns: cols, spacing: sep) {
                         ForEach(assets, id: \.localIdentifier) { asset in
                             Thumb(asset: asset,
                                   manager: manager,
@@ -75,12 +125,17 @@ struct NewPostView: View {
                         }
                     }
                 }
-                .coordinateSpace(name: "scroll")
+                .background(Color(.systemGray6))
                 .onPreferenceChange(OffsetKey.self) { y in
-                    withAnimation { collapsed = y < -40 }
+                    if y < -20 && !collapsed {
+                        withAnimation { collapsed = true }
+                    } else if y > 0 && collapsed {
+                        withAnimation { collapsed = false }
+                    }
                 }
             }
             .navigationTitle("New Post")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
@@ -92,10 +147,22 @@ struct NewPostView: View {
             }
             .background(
                 NavigationLink(isActive: $showCaption) {
-                    if let img = preview { PostCaptionView(image: img) }
+                    if let img = preview {
+                        PostCaptionView(image: img) {
+                            dismiss()
+                        }
+                    }
                 } label: { EmptyView() }.hidden()
             )
+            .sheet(isPresented: $showCropper) {
+                if let img = preview {
+                    ImageCropperView(image: img) { cropped in
+                        preview = cropped
+                    }
+                }
+            }
             .task(loadAssets)
+            .coordinateSpace(name: "scroll")
         }
     }
 
@@ -138,7 +205,10 @@ fileprivate struct Thumb: View {
     let onTap: () -> Void
 
     @State private var img: UIImage?
-    private var side: CGFloat { (UIScreen.main.bounds.width - 2) / 3 }
+    private var side: CGFloat {
+        let sep = 1 / UIScreen.main.scale
+        return (UIScreen.main.bounds.width - sep * 2) / 3
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -155,12 +225,14 @@ fileprivate struct Thumb: View {
 
             if selected {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.blue)
+                    .foregroundColor(.black)
                     .padding(4)
             }
         }
+        .cornerRadius(4)
         .overlay(
-            Rectangle().stroke(Color(.systemGray4), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color(.systemGray4).opacity(0.5), lineWidth: 1 / UIScreen.main.scale)
         )
         .onAppear(perform: loadThumb)
         .onTapGesture { onTap() }

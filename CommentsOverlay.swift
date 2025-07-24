@@ -140,7 +140,9 @@ struct CommentsOverlay: View {
             userPhotoURL: Auth.auth().currentUser?.photoURL?.absoluteString,
             text: txt
         )
-        NetworkService.shared.addComment(to: post.id, comment: c) { _ in }
+        NetworkService.shared.addComment(to: post.id, comment: c) { _ in
+            NetworkService.shared.handleCommentNotifications(postOwnerId: post.userId, comment: c)
+        }
     }
 
     // MARK: edit helpers

@@ -195,7 +195,7 @@ struct ProfileView: View {
     @ViewBuilder
     private func navStat<Dest: View>(count: Int, label: String, destination: Dest) -> some View {
         NavigationLink(destination: destination) {
-            statView(count: count, label: label).foregroundColor(.blue)
+            statView(count: count, label: label).foregroundColor(.black)
         }
         .buttonStyle(PlainButtonStyle())
     }

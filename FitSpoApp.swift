@@ -9,6 +9,7 @@ struct FitSpoApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .accentColor(.black)
         }
     }
 }

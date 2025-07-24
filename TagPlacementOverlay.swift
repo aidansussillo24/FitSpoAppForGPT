@@ -35,7 +35,7 @@ struct TagPlacementOverlay: View {
                     // movable pin
                     if let p = currentPos {
                         Circle()
-                            .fill(Color.accentColor)
+                            .fill(Color.black)
                             .frame(width: 20, height: 20)
                             .position(p)
                             .gesture(

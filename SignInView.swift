@@ -41,7 +41,7 @@ struct SignInView: View {
             }
             .disabled(isLoading || email.isEmpty || password.isEmpty)
             .padding()
-            .background(Color.blue)
+            .background(Color.black)
             .foregroundColor(.white)
             .cornerRadius(8)
 

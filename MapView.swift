@@ -5,7 +5,10 @@ import SwiftUI
 import MapKit
 
 struct MapView: View {
-    @State private var posts: [Post] = []
+    @State private var allPosts: [Post] = []
+    @State private var posts:    [Post] = []
+    @State private var filter    = MapFilter()
+    @State private var showFilters = false
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 37.7749,
                                        longitude: -122.4194),
@@ -52,10 +55,22 @@ struct MapView: View {
                 }
             }
             .navigationTitle("Map")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Image(systemName: "slider.horizontal.3")
+                        .onTapGesture { showFilters = true }
+                }
+            }
+            .sheet(isPresented: $showFilters) {
+                MapFilterSheet(filter: $filter)
+                    .presentationDetents([.fraction(0.45)])
+            }
+            .onChange(of: filter) { _ in applyFilter() }
             .onAppear {
                 NetworkService.shared.fetchPosts { result in
                     if case .success(let allPosts) = result {
-                        self.posts = allPosts
+                        self.allPosts = allPosts
+                        applyFilter()
 
                         // center on first geo-tagged post, if any
                         if let first = allPosts.first,
@@ -71,6 +86,47 @@ struct MapView: View {
                 }
             }
         }
+    }
+
+    private func applyFilter() {
+        var filtered = allPosts
+
+        if let season = filter.season {
+            filtered = filtered.filter { p in
+                let m = Calendar.current.component(.month, from: p.timestamp)
+                switch season {
+                case .spring: return (3...5).contains(m)
+                case .summer: return (6...8).contains(m)
+                case .fall:   return (9...11).contains(m)
+                case .winter: return m == 12 || m <= 2
+                }
+            }
+        }
+
+        if let band = filter.tempBand {
+            filtered = filtered.filter { p in
+                guard let c = p.temp else { return false }
+                let f = c * 9 / 5 + 32
+                switch band {
+                case .cold: return f < 40
+                case .cool: return f >= 40 && f < 60
+                case .warm: return f >= 60 && f < 80
+                case .hot:  return f >= 80
+                }
+            }
+        }
+
+        if let w = filter.weather {
+            filtered = filtered.filter { p in
+                guard let sym = p.weatherSymbolName else { return false }
+                switch w {
+                case .sunny:  return sym == "sun.max" || sym == "cloud.sun"
+                case .cloudy: return sym.hasPrefix("cloud")
+                }
+            }
+        }
+
+        posts = filtered
     }
 }
 

@@ -76,7 +76,7 @@ struct ChatDetailView: View {
                 .padding(10)
                 .background(incoming
                             ? Color.gray.opacity(0.2)
-                            : Color.blue.opacity(0.8))
+                            : Color.black.opacity(0.8))
                 .foregroundColor(incoming ? .primary : .white)
                 .cornerRadius(12)
                 .frame(maxWidth: 250, alignment: incoming ? .leading : .trailing)

@@ -89,6 +89,7 @@ struct CommentsView: View {
     )
 
     NetworkService.shared.addComment(to: post.id, comment: comment) { _ in
+      NetworkService.shared.handleCommentNotifications(postOwnerId: post.userId, comment: comment)
       loadComments()        // simple refresh
     }
   }
