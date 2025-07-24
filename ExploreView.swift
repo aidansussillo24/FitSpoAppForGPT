@@ -28,6 +28,7 @@ struct ExploreView: View {
     @State private var accountHits: [UserLite] = []
     @State private var isSearchingAccounts = false
     @State private var showResults = false
+    @State private var selectedUserId: String? = nil
 
     @State private var hashtagSuggestions: [String] = []
     @State private var isSearchingHashtags = false
@@ -66,7 +67,11 @@ struct ExploreView: View {
                             chipRow
                             trendingTagsRow
                         }
-                        if isAccountMode { accountResultsList } else { grid }
+                        if !(showSuggestions && !searchText.isEmpty) {
+                            if isAccountMode { accountResultsList } else { grid }
+                        } else if !isAccountMode {
+                            grid
+                        }
                     }
                 }
             }
@@ -91,6 +96,9 @@ struct ExploreView: View {
             .task        { await coldStart() }
             .navigationDestination(isPresented: $showResults) {
                 SearchResultsView(query: searchText)
+            }
+            .navigationDestination(item: $selectedUserId) { userId in
+                ProfileView(userId: userId)
             }
         }
     }
@@ -325,8 +333,7 @@ struct ExploreView: View {
                         // Accounts
                         ForEach(accountHits) { u in
                             Button(action: {
-                                searchText = u.displayName
-                                showResults = true
+                                selectedUserId = u.id
                                 showSuggestions = false
                             }) {
                                 HStack(spacing: 12) {
