@@ -68,8 +68,6 @@ struct ExploreView: View {
                             trendingTagsRow
                         }
                         if !(showSuggestions && !searchText.isEmpty) {
-                            if isAccountMode { accountResultsList } else { grid }
-                        } else if !isAccountMode {
                             grid
                         }
                     }
@@ -99,6 +97,12 @@ struct ExploreView: View {
             }
             .navigationDestination(item: $selectedUserId) { userId in
                 ProfileView(userId: userId)
+            }
+            .onChange(of: selectedUserId) { newValue in
+                if newValue == nil && !searchText.isEmpty {
+                    showSuggestions = true
+                    Task { await fetchSuggestions() }
+                }
             }
         }
     }
@@ -246,26 +250,6 @@ struct ExploreView: View {
                 .padding(.bottom, 6)
             }
         }
-    }
-
-    private var accountResultsList: some View {
-        VStack(spacing: 0) {
-            if isSearchingAccounts {
-                ProgressView().padding(.top, 40)
-            } else if accountHits.isEmpty {
-                Text("No accounts found")
-                    .foregroundColor(.secondary)
-                    .padding(.top, 40)
-            } else {
-                ForEach(accountHits) { u in
-                    NavigationLink { ProfileView(userId: u.id) } label: {
-                        AccountRow(user: u)
-                    }
-                    Divider()
-                }
-            }
-        }
-        .padding(.horizontal)
     }
 
     private var grid: some View {
