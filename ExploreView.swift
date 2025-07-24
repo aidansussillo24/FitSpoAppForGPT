@@ -48,29 +48,26 @@ struct ExploreView: View {
     // ────────── Body ──────────
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ZStack(alignment: .top) {
-                    VStack(spacing: 0) {
-                        // Search bar is handled by .searchable
-                        // Add spacing below search bar for dropdown
-                        Color.clear.frame(height: showSuggestions && !searchText.isEmpty ? 8 : 0)
-                        if showSuggestions && !searchText.isEmpty {
-                            suggestionsDropdown
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                                .animation(.easeInOut(duration: 0.15), value: showSuggestions)
+            ZStack(alignment: .top) {
+                VStack(spacing: 0) {
+                    // Add spacing below search bar for dropdown
+                    Color.clear.frame(height: showSuggestions && !searchText.isEmpty ? 8 : 0)
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            if !(showSuggestions && !searchText.isEmpty) {
+                                chipRow
+                                trendingTagsRow
+                            }
+                            if !(showSuggestions && !searchText.isEmpty) {
+                                grid
+                            }
                         }
                     }
                 }
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if !(showSuggestions && !searchText.isEmpty) {
-                            chipRow
-                            trendingTagsRow
-                        }
-                        if !(showSuggestions && !searchText.isEmpty) {
-                            grid
-                        }
-                    }
+                if showSuggestions && !searchText.isEmpty {
+                    suggestionsDropdown
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .animation(.easeInOut(duration: 0.15), value: showSuggestions)
                 }
             }
             .navigationTitle("Explore")
@@ -100,6 +97,12 @@ struct ExploreView: View {
             }
             .onChange(of: selectedUserId) { newValue in
                 if newValue == nil && !searchText.isEmpty {
+                    showSuggestions = true
+                    Task { await fetchSuggestions() }
+                }
+            }
+            .onAppear {
+                if !searchText.isEmpty && selectedUserId == nil {
                     showSuggestions = true
                     Task { await fetchSuggestions() }
                 }
