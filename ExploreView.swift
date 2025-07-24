@@ -41,6 +41,8 @@ struct ExploreView: View {
     @State private var filter      = ExploreFilter()
     @State private var showFilters = false
 
+    @State private var selectedPost: Post? = nil
+
     private var isAccountMode: Bool {
         !searchText.isEmpty && searchText.first != "#"
     }
@@ -48,38 +50,35 @@ struct ExploreView: View {
     // ────────── Body ──────────
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .top) {
-                VStack(spacing: 0) {
-                    // Add spacing below search bar for dropdown
-                    Color.clear.frame(height: showSuggestions && !searchText.isEmpty ? 8 : 0)
+            Group {
+                if searchText.isEmpty {
+                    // Normal Explore content
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            if !(showSuggestions && !searchText.isEmpty) {
-                                chipRow
-                                trendingTagsRow
-                            }
-                            if !(showSuggestions && !searchText.isEmpty) {
-                                grid
-                            }
+                            chipRow
+                            trendingTagsRow
+                            grid
                         }
                     }
-                }
-                if showSuggestions && !searchText.isEmpty {
-                    suggestionsDropdown
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .animation(.easeInOut(duration: 0.15), value: showSuggestions)
+                } else {
+                    // Search takes over the entire screen
+                    searchContent
                 }
             }
             .navigationTitle("Explore")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Image(systemName: "slider.horizontal.3")
-                        .onTapGesture { showFilters = true }
+                    if searchText.isEmpty {
+                        Image(systemName: "slider.horizontal.3")
+                            .onTapGesture { showFilters = true }
+                    }
                 }
             }
             .sheet(isPresented: $showFilters) {
-                ExploreFilterSheet(filter: $filter)
-                    .presentationDetents([.fraction(0.45)])
+                if searchText.isEmpty {
+                    ExploreFilterSheet(filter: $filter)
+                        .presentationDetents([.fraction(0.45)])
+                }
             }
             .searchable(text: $searchText,
                         prompt: "Search accounts or #tags")
@@ -94,6 +93,9 @@ struct ExploreView: View {
             }
             .navigationDestination(item: $selectedUserId) { userId in
                 ProfileView(userId: userId)
+            }
+            .navigationDestination(item: $selectedPost) { post in
+                PostDetailView(post: post)
             }
             .onChange(of: selectedUserId) { newValue in
                 if newValue == nil && !searchText.isEmpty {
@@ -129,6 +131,12 @@ struct ExploreView: View {
                 .fetchTrendingPosts(startAfter: lastDoc)
             lastDoc = bundle.lastDoc
             allPosts.append(contentsOf: bundle.posts)
+            // Deduplicate by post.id
+            var seen = Set<String>()
+            allPosts = allPosts.filter { post in
+                if seen.contains(post.id) { return false }
+                seen.insert(post.id); return true
+            }
             computeTrendingTags()
             applyFilter()
         } catch {
@@ -139,6 +147,12 @@ struct ExploreView: View {
     private func loadMoreIfNeeded() async {
         guard !isLoading, lastDoc != nil, !isAccountMode else { return }
         await reload(clear: false)
+        // Deduplicate after loading more
+        var seen = Set<String>()
+        allPosts = allPosts.filter { post in
+            if seen.contains(post.id) { return false }
+            seen.insert(post.id); return true
+        }
     }
 
     // ────────── Trending tags ──────────
@@ -258,7 +272,9 @@ struct ExploreView: View {
     private var grid: some View {
         LazyVGrid(columns: columns, spacing: spacing) {
             ForEach(posts) { post in
-                NavigationLink { PostDetailView(post: post) } label: {
+                NavigationLink {
+                    PostDetailView(post: post)
+                } label: {
                     ImageTile(url: post.imageURL)
                 }
                 .onAppear {
@@ -272,106 +288,114 @@ struct ExploreView: View {
         .padding(.bottom, spacing)
     }
 
-    private var suggestionsDropdown: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private var searchContent: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: 8) // Spacing below search bar
+            
             if isSearchingAccounts || isSearchingHashtags {
-                HStack {
+                VStack {
                     Spacer()
-                    ProgressView().padding(.vertical, 16)
+                    ProgressView()
+                        .padding()
+                    Text("Searching...")
+                        .foregroundColor(.secondary)
                     Spacer()
                 }
             } else {
-                if searchText.first == "#" {
-                    // Only hashtags
-                    if hashtagSuggestions.isEmpty {
-                        Text("No hashtags found")
-                            .foregroundColor(.secondary)
-                            .padding(.vertical, 14)
-                            .padding(.horizontal, 20)
-                    } else {
-                        ForEach(hashtagSuggestions, id: \ .self) { tag in
-                            Button(action: {
-                                searchText = "#" + tag
-                                showResults = true
-                                showSuggestions = false
-                            }) {
-                                HStack(spacing: 12) {
-                                    Text("#")
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.primary)
-                                    Text(tag)
-                                        .foregroundColor(.primary)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if searchText.first == "#" {
+                            // Only hashtags
+                            if hashtagSuggestions.isEmpty {
+                                VStack {
+                                    Spacer()
+                                    Text("No hashtags found")
+                                        .foregroundColor(.secondary)
+                                        .padding()
                                     Spacer()
                                 }
-                                .padding(.vertical, 14)
-                                .padding(.horizontal, 20)
-                            }
-                            .background(Color.clear)
-                        }
-                    }
-                } else {
-                    // Both accounts and hashtags
-                    if accountHits.isEmpty && hashtagSuggestions.isEmpty {
-                        Text("No results found")
-                            .foregroundColor(.secondary)
-                            .padding(.vertical, 14)
-                            .padding(.horizontal, 20)
-                    } else {
-                        // Accounts
-                        ForEach(accountHits) { u in
-                            Button(action: {
-                                selectedUserId = u.id
-                                showSuggestions = false
-                            }) {
-                                HStack(spacing: 12) {
-                                    AsyncImage(url: URL(string: u.avatarURL)) { phase in
-                                        if let img = phase.image { img.resizable() }
-                                        else { Color.gray.opacity(0.3) }
+                            } else {
+                                ForEach(hashtagSuggestions, id: \.self) { tag in
+                                    Button(action: {
+                                        searchText = "#" + tag
+                                        showResults = true
+                                        showSuggestions = false
+                                    }) {
+                                        HStack(spacing: 12) {
+                                            Text("#")
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.primary)
+                                            Text(tag)
+                                                .foregroundColor(.primary)
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 14)
+                                        .padding(.horizontal, 20)
                                     }
-                                    .frame(width: 36, height: 36)
-                                    .clipShape(Circle())
-                                    Text(u.displayName)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.primary)
+                                    .background(Color.clear)
+                                }
+                            }
+                        } else {
+                            // Both accounts and hashtags
+                            if accountHits.isEmpty && hashtagSuggestions.isEmpty {
+                                VStack {
+                                    Spacer()
+                                    Text("No results found")
+                                        .foregroundColor(.secondary)
+                                        .padding()
                                     Spacer()
                                 }
-                                .padding(.vertical, 14)
-                                .padding(.horizontal, 20)
-                            }
-                            .background(Color.clear)
-                        }
-                        // Hashtags
-                        ForEach(hashtagSuggestions, id: \ .self) { tag in
-                            Button(action: {
-                                searchText = "#" + tag
-                                showResults = true
-                                showSuggestions = false
-                            }) {
-                                HStack(spacing: 12) {
-                                    Text("#")
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.primary)
-                                    Text(tag)
-                                        .foregroundColor(.primary)
-                                    Spacer()
+                            } else {
+                                // Accounts
+                                ForEach(accountHits) { u in
+                                    Button(action: {
+                                        selectedUserId = u.id
+                                        showSuggestions = false
+                                    }) {
+                                        HStack(spacing: 12) {
+                                            AsyncImage(url: URL(string: u.avatarURL)) { phase in
+                                                if let img = phase.image { img.resizable() }
+                                                else { Color.gray.opacity(0.3) }
+                                            }
+                                            .frame(width: 36, height: 36)
+                                            .clipShape(Circle())
+                                            Text(u.displayName)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(.primary)
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 14)
+                                        .padding(.horizontal, 20)
+                                    }
+                                    .background(Color.clear)
                                 }
-                                .padding(.vertical, 14)
-                                .padding(.horizontal, 20)
+                                // Hashtags
+                                ForEach(hashtagSuggestions, id: \.self) { tag in
+                                    Button(action: {
+                                        searchText = "#" + tag
+                                        showResults = true
+                                        showSuggestions = false
+                                    }) {
+                                        HStack(spacing: 12) {
+                                            Text("#")
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.primary)
+                                            Text(tag)
+                                                .foregroundColor(.primary)
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 14)
+                                        .padding(.horizontal, 20)
+                                    }
+                                    .background(Color.clear)
+                                }
                             }
-                            .background(Color.clear)
                         }
                     }
+                    .padding(.bottom, 80) // Extra padding at bottom for scrolling
                 }
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color(.black).opacity(0.08), radius: 12, x: 0, y: 4)
-        )
-        .padding(.horizontal, 16)
-        .padding(.top, 2)
-        .zIndex(1)
     }
 
     // ────────── Filtering ──────────
