@@ -12,6 +12,7 @@ struct CommentsOverlay: View {
     @Binding var isPresented: Bool
     var onCommentCountChange: (Int) -> Void
     var onHashtagTap: ((String) -> Void)? = nil
+    var onMentionTap: ((String) -> Void)? = nil
 
     @State private var comments: [Comment] = []
     @State private var newText  = ""
@@ -75,6 +76,9 @@ struct CommentsOverlay: View {
                             onDelete: { deleteComment(c) },
                             onHashtagTap: { hashtag in
                                 onHashtagTap?(hashtag)
+                            },
+                            onMentionTap: { username in
+                                onMentionTap?(username)
                             }
                         )
                     }
@@ -182,6 +186,7 @@ private struct CommentRow: View {
     var onEdit: () -> Void
     var onDelete: () -> Void
     var onHashtagTap: (String) -> Void
+    var onMentionTap: (String) -> Void
 
     @State private var name: String = ""
     @State private var avatar: String?
@@ -200,6 +205,8 @@ private struct CommentRow: View {
                 Text(name.isEmpty ? comment.username : name).font(.subheadline).bold()
                 ClickableHashtagText(text: comment.text) { hashtag in
                     onHashtagTap(hashtag)
+                } onMentionTap: { username in
+                    onMentionTap(username)
                 }
             }
             Spacer(minLength: 0)
