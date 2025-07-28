@@ -4,16 +4,50 @@ struct LocationDetailView: View {
     let location: LocationCluster
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = 0
+    @State private var isLoading = true
+    @State private var posts: [Post] = []
     
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                if isLoading {
+                    // Loading state
+                    VStack(spacing: 20) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                        
+                        Text("Loading location details...")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                } else {
+                    if posts.isEmpty {
+                        // No posts available
+                        VStack(spacing: 20) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 48))
+                                .foregroundColor(.gray)
+                            
+                            Text("No posts available")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("This location doesn't have any posts yet.")
+                                .font(.system(size: 16))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(.systemBackground))
+                    } else {
                 // Header
                 VStack(spacing: 16) {
                     // Location info
                     HStack(spacing: 12) {
                         // Location image
-                        if let firstPost = location.posts.first {
+                        if let firstPost = posts.first {
                             RemoteImage(url: firstPost.imageURL, contentMode: .fill)
                                 .frame(width: 60, height: 60)
                                 .clipShape(Circle())
@@ -37,7 +71,7 @@ struct LocationDetailView: View {
                                 .font(.system(size: 14))
                                 .foregroundColor(.secondary)
                             
-                            Text("\(location.postCount) posts")
+                            Text("\(posts.count) posts")
                                 .font(.system(size: 14))
                                 .foregroundColor(.secondary)
                         }
@@ -115,7 +149,7 @@ struct LocationDetailView: View {
                 // Posts grid
                 ScrollView {
                     LazyVStack(spacing: 16) {
-                        ForEach(sortedPosts) { post in
+                        ForEach(sortedPosts, id: \.id) { post in
                             PostCardView(post: post) {
                                 // Handle like action if needed
                             }
@@ -124,6 +158,8 @@ struct LocationDetailView: View {
                     }
                     .padding(.top, 20)
                     .padding(.bottom, 100) // Extra padding for bottom sheet
+                }
+                    }
                 }
             }
             .navigationTitle("")
@@ -142,19 +178,32 @@ struct LocationDetailView: View {
                     }
                 }
             }
+            .onAppear {
+                loadPosts()
+            }
         }
+    }
+    
+    // MARK: - Data Loading
+    private func loadPosts() {
+        // Immediately load the posts from the location
+        posts = location.posts
+        isLoading = false
+        
+        print("LocationDetailView: Loaded \(posts.count) posts for location \(location.id)")
+        print("Posts: \(posts.map { "\($0.id) (\($0.likes) likes)" })")
     }
     
     private var sortedPosts: [Post] {
         switch selectedTab {
         case 0:
             // Sort by likes (top posts)
-            return location.posts.sorted { $0.likes > $1.likes }
+            return posts.sorted { $0.likes > $1.likes }
         case 1:
             // Sort by timestamp (recent posts)
-            return location.posts.sorted { $0.timestamp > $1.timestamp }
+            return posts.sorted { $0.timestamp > $1.timestamp }
         default:
-            return location.posts
+            return posts
         }
     }
 }

@@ -42,6 +42,7 @@ struct MapView: View {
                         InstagramStyleMapMarker(
                             cluster: cluster,
                             onTap: {
+                                print("Tapping cluster: \(cluster.id) with \(cluster.posts.count) posts")
                                 selectedLocation = cluster
                                 showLocationDetail = true
                             }
@@ -120,8 +121,47 @@ struct MapView: View {
             }
             .sheet(isPresented: $showLocationDetail) {
                 if let location = selectedLocation {
-                    LocationDetailView(location: location)
-                        .presentationDetents([.fraction(0.7), .large])
+                    if location.posts.isEmpty {
+                        // Fallback for invalid location
+                        VStack(spacing: 20) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 48))
+                                .foregroundColor(.orange)
+                            
+                            Text("Location not available")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("This location has no posts or data is unavailable.")
+                                .font(.system(size: 16))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                            
+                            Button("Close") {
+                                showLocationDetail = false
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        .padding(40)
+                        .presentationDetents([.fraction(0.4)])
+                    } else {
+                        LocationDetailView(location: location)
+                            .presentationDetents([.fraction(0.7), .large])
+                    }
+                } else {
+                    // This should never happen, but just in case
+                    Text("No location selected")
+                        .presentationDetents([.fraction(0.2)])
+                }
+            }
+            .onChange(of: showLocationDetail) { isShowing in
+                if isShowing, let location = selectedLocation {
+                    print("Showing location detail for: \(location.id) with \(location.posts.count) posts")
+                    print("Posts: \(location.posts.map { $0.id })")
                 }
             }
             .onChange(of: filter) { _ in applyFilter() }
@@ -154,10 +194,12 @@ struct MapView: View {
     
     // MARK: - Location Clustering
     private func createLocationClusters(from posts: [Post]) async -> [LocationCluster] {
-        let clusterRadius: Double = 0.001 // ~100m radius - much more precise
+        let clusterRadius: Double = 0.0005 // ~50m radius - even more precise
         
         var clusters: [LocationCluster] = []
         var processedPosts: Set<String> = []
+        
+        print("Creating clusters from \(posts.count) posts")
         
         for post in posts {
             if processedPosts.contains(post.id) { continue }
@@ -180,20 +222,22 @@ struct MapView: View {
                 let location1 = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
                 let location2 = CLLocation(latitude: otherCoord.latitude, longitude: otherCoord.longitude)
                 let distance = location1.distance(from: location2)
-                // Only group posts that are very close (within ~50 meters)
+                // Only group posts that are very close (within ~25 meters)
                 // This ensures they're actually from the same location
-                return distance <= 50 // 50 meters max
+                return distance <= 25 // 25 meters max for more precise clustering
             }
             
             // Sort nearby posts by likes to get the top post
             let sortedNearbyPosts = nearbyPosts.sorted { $0.likes > $1.likes }
             let topPost = sortedNearbyPosts.first ?? post
             
+            print("Post \(post.id) at (\(String(format: "%.6f", coord.latitude)), \(String(format: "%.6f", coord.longitude))) has \(nearbyPosts.count) nearby posts")
+            
             // Only create a cluster if posts are actually from the same location
             // If it's just one post, don't cluster it
             if nearbyPosts.count == 1 {
                 // Single post - create individual marker
-                print("Creating single post marker for post \(post.id) at (\(coord.latitude), \(coord.longitude))")
+                print("Creating single post marker for post \(post.id) with \(post.likes) likes")
                 let cluster = LocationCluster(
                     id: post.id,
                     latitude: coord.latitude,
@@ -206,14 +250,14 @@ struct MapView: View {
                 processedPosts.insert(post.id)
             } else {
                 // Multiple posts - create cluster only if they're very close
-                print("Creating cluster with \(nearbyPosts.count) posts at (\(coord.latitude), \(coord.longitude))")
+                print("Creating cluster with \(nearbyPosts.count) posts")
                 for (index, nearbyPost) in nearbyPosts.enumerated() {
                     let nearbyCoord = CLLocationCoordinate2D(latitude: nearbyPost.latitude!, longitude: nearbyPost.longitude!)
                     let distance = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
                         .distance(from: CLLocation(latitude: nearbyCoord.latitude, longitude: nearbyCoord.longitude))
-                    print("  Post \(index + 1): \(nearbyPost.id) - Distance: \(String(format: "%.1f", distance))m")
+                    print("  Post \(index + 1): \(nearbyPost.id) - Distance: \(String(format: "%.1f", distance))m - Likes: \(nearbyPost.likes)")
                 }
-                print("  Top post (most likes): \(topPost.id) with \(topPost.likes) likes")
+                print("  Top post selected: \(topPost.id) with \(topPost.likes) likes")
                 let cluster = LocationCluster(
                     id: "cluster_\(topPost.id)", // Use a unique cluster ID
                     latitude: coord.latitude,
@@ -230,6 +274,8 @@ struct MapView: View {
                 }
             }
         }
+        
+        print("Created \(clusters.count) total clusters")
         
         // Reverse geocode all clusters to get proper location names
         await reverseGeocodeClusters(&clusters)
@@ -341,9 +387,12 @@ struct LocationCluster: Identifiable {
     
     var postCount: Int { posts.count }
     var primaryImageURL: String { 
-        // Return the top post's image (most likes)
-        let topPost = posts.max(by: { $0.likes < $1.likes }) ?? posts.first
-        return topPost?.imageURL ?? ""
+        // Return the top post's image (most likes) - ensure we always get the right one
+        guard !posts.isEmpty else { return "" }
+        
+        let topPost = posts.max(by: { $0.likes < $1.likes }) ?? posts.first!
+        print("LocationCluster \(id): Selected top post \(topPost.id) with \(topPost.likes) likes for primary image")
+        return topPost.imageURL
     }
     var distance: String {
         // Calculate distance from user's location (simplified)
@@ -383,8 +432,8 @@ struct InstagramStyleMapMarker: View {
                     .frame(width: 46, height: 46)
                     .clipShape(Circle())
                     .onAppear {
-                        let topPost = cluster.posts.max(by: { $0.likes < $1.likes }) ?? cluster.posts.first
-                        print("Map marker for cluster \(cluster.id) showing image from post: \(topPost?.id ?? "unknown") with \(topPost?.likes ?? 0) likes")
+                        print("Map marker for cluster \(cluster.id) displaying image URL: \(cluster.primaryImageURL)")
+                        print("Cluster has \(cluster.posts.count) posts: \(cluster.posts.map { "\($0.id) (\($0.likes) likes)" })")
                     }
                 
                 // Show post count as a small badge if multiple posts
