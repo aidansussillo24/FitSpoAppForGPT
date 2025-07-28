@@ -188,4 +188,35 @@ extension NetworkService {
             }
         }
     }
+    
+    /// Delete a chat and all its messages
+    func deleteChat(chatId: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        let db = Firestore.firestore()
+        
+        // Delete all messages in the chat first
+        db.collection("chats").document(chatId).collection("messages").getDocuments { snap, err in
+            if let err = err {
+                return completion(.failure(err))
+            }
+            
+            let batch = db.batch()
+            
+            // Add message deletions to batch
+            for doc in snap?.documents ?? [] {
+                batch.deleteDocument(doc.reference)
+            }
+            
+            // Add chat deletion to batch
+            batch.deleteDocument(db.collection("chats").document(chatId))
+            
+            // Execute batch
+            batch.commit { err in
+                if let err = err {
+                    completion(.failure(err))
+                } else {
+                    completion(.success(()))
+                }
+            }
+        }
+    }
 }
