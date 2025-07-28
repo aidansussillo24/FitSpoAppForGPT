@@ -19,6 +19,33 @@ struct PostCardView: View {
 
     @Environment(\.openURL) private var openURL
 
+    // MARK: – Computed properties
+    private var timeAgoString: String {
+        let now = Date()
+        let timeInterval = now.timeIntervalSince(post.timestamp)
+        
+        let minute: TimeInterval = 60
+        let hour: TimeInterval = 60 * minute
+        let day: TimeInterval = 24 * hour
+        let week: TimeInterval = 7 * day
+        
+        if timeInterval < minute {
+            return "now"
+        } else if timeInterval < hour {
+            let minutes = Int(timeInterval / minute)
+            return "\(minutes)m"
+        } else if timeInterval < day {
+            let hours = Int(timeInterval / hour)
+            return "\(hours)h"
+        } else if timeInterval < week {
+            let days = Int(timeInterval / day)
+            return "\(days)d"
+        } else {
+            let weeks = Int(timeInterval / week)
+            return "\(weeks)w"
+        }
+    }
+
     private var forecastURL: URL? {
         guard let lat = post.latitude,
               let lon = post.longitude
@@ -29,6 +56,48 @@ struct PostCardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+
+            // ── Top Header (Avatar, Name, Weather) ─────────────────
+            HStack(spacing: 12) {
+                NavigationLink(destination: ProfileView(userId: post.userId)) {
+                    HStack(spacing: 8) {
+                        avatarThumb
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(authorName.isEmpty ? "Loading..." : authorName)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            if let temp = post.temp, let icon = post.weatherSymbolName {
+                                HStack(spacing: 4) {
+                                    Image(systemName: icon)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                    Text("\(Int(temp))°")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+                
+                // Weather tap button
+                if forecastURL != nil {
+                    Button {
+                        if let url = forecastURL { openURL(url) }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
             // ── Tap image → PostDetail ─────────────────────────────
             NavigationLink(destination: PostDetailView(post: post)) {
@@ -42,34 +111,44 @@ struct PostCardView: View {
             }
             .buttonStyle(.plain)
 
-            // ── Footer (avatar, name, like button) ─────────────────
-            HStack(spacing: 8) {
-
-                NavigationLink(destination: ProfileView(userId: post.userId)) {
-                    HStack(spacing: 8) {
-                        avatarThumb
-                        Text(isLoadingAuthor ? "Loading…" : authorName)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.center)
-
-                            .layoutPriority(1)
-
+            // ── Footer (like, comment, share, timestamp) ───────────
+            HStack(spacing: 12) {
+                // Like button
+                Button(action: onLike) {
+                    HStack(alignment: .center, spacing: 4) {
+                        Image(systemName: post.isLiked ? "heart.fill" : "heart")
+                            .foregroundColor(post.isLiked ? .red : .primary)
+                        Text("\(post.likes)")
                     }
+                }
+                .buttonStyle(.plain)
+
+                // Comment button
+                Button {
+                    // TODO: Implement comment action
+                } label: {
+                    Image(systemName: "message")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+
+                // Share button
+                Button {
+                    // TODO: Implement share action
+                } label: {
+                    Image(systemName: "paperplane")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
                 }
                 .buttonStyle(.plain)
 
                 Spacer()
 
-                Button(action: onLike) {
-                    HStack(alignment: .center, spacing: 4) {
-                        Image(systemName: post.isLiked ? "heart.fill" : "heart")
-                        Text("\(post.likes)")
-                    }
-                    .frame(width: 40)
-                }
-                .buttonStyle(.plain)
+                // Timestamp
+                Text(timeAgoString)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
             }
             .padding(8)
             .background(Color.white)
@@ -78,7 +157,6 @@ struct PostCardView: View {
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.1),
                 radius: 1, x: 0, y: 1)
-        .overlay(alignment: .topTrailing) { weatherIconView }
         .onAppear(perform: fetchAuthor)
     }
 
@@ -87,48 +165,13 @@ struct PostCardView: View {
         if let url = URL(string: authorAvatarURL),
            !authorAvatarURL.isEmpty {
             RemoteImage(url: url.absoluteString, contentMode: .fill)
-                .frame(width: 24, height: 24)
+                .frame(width: 32, height: 32)
                 .clipShape(Circle())
         } else {
             Image(systemName: "person.crop.circle.fill")
                 .resizable()
-                .frame(width: 24, height: 24)
+                .frame(width: 32, height: 32)
                 .foregroundColor(.gray)
-        }
-    }
-
-    // MARK: – weather helper
-    @ViewBuilder private var weatherIconView: some View {
-        if let name = post.weatherSymbolName {
-            HStack(spacing: 4) {
-                if let temp = post.tempString {
-                    Text(temp)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                }
-
-                if let (primary, secondary) = post.weatherIconColors {
-                    if let secondary = secondary {
-                        Image(systemName: name)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(primary, secondary)
-                    } else {
-                        Image(systemName: name)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(primary)
-                    }
-                } else {
-                    Image(systemName: name)
-                }
-            }
-            .padding(6)
-            .background(
-                .ultraThinMaterial,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .shadow(color: Color.black.opacity(0.15), radius: 2, x: 0, y: 1)
-            .padding(8)
-            .onTapGesture { if let url = forecastURL { openURL(url) } }
         }
     }
 

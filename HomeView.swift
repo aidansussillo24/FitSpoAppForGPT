@@ -286,11 +286,15 @@ struct HomeView: View {
 
     // MARK: like handling
     private func toggleLike(_ post: Post) {
+        print("HomeView: Toggle like for post: \(post.id), current liked: \(post.isLiked), likes: \(post.likes)")
         NetworkService.shared.toggleLike(post: post) { result in
             DispatchQueue.main.async {
                 if case .success(let updated) = result,
                    let idx = posts.firstIndex(where: { $0.id == updated.id }) {
+                    print("HomeView: Like toggle success - updating post at index \(idx) with likes: \(updated.likes), liked: \(updated.isLiked)")
                     posts[idx] = updated
+                } else if case .failure(let error) = result {
+                    print("HomeView: Like toggle failed: \(error.localizedDescription)")
                 }
             }
         }

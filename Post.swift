@@ -91,9 +91,11 @@ struct Post: Identifiable, Codable {
 // Hashable conformance for navigationDestination(item:)
 extension Post: Hashable {
     static func == (lhs: Post, rhs: Post) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id && lhs.likes == rhs.likes && lhs.isLiked == rhs.isLiked
     }
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
+        hasher.combine(likes)
+        hasher.combine(isLiked)
     }
 }
