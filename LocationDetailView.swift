@@ -148,14 +148,30 @@ struct LocationDetailView: View {
                 
                 // Posts grid
                 ScrollView {
-                    LazyVStack(spacing: 16) {
-                        ForEach(sortedPosts, id: \.id) { post in
-                            PostCardView(post: post) {
-                                // Handle like action if needed
+                    // Split into two columns like Home Screen
+                    let leftColumn = sortedPosts.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
+                    let rightColumn = sortedPosts.enumerated().filter { !$0.offset.isMultiple(of: 2) }.map(\.element)
+                    
+                    HStack(alignment: .top, spacing: 8) {
+                        // Left column
+                        LazyVStack(spacing: 8) {
+                            ForEach(leftColumn, id: \.id) { post in
+                                PostCardView(post: post) {
+                                    // Handle like action if needed
+                                }
                             }
-                            .padding(.horizontal, 20)
+                        }
+                        
+                        // Right column
+                        LazyVStack(spacing: 8) {
+                            ForEach(rightColumn, id: \.id) { post in
+                                PostCardView(post: post) {
+                                    // Handle like action if needed
+                                }
+                            }
                         }
                     }
+                    .padding(.horizontal, 12)
                     .padding(.top, 20)
                     .padding(.bottom, 100) // Extra padding for bottom sheet
                 }
