@@ -20,6 +20,8 @@ struct PostCardView: View {
     @State private var showShareSheet = false
     @State private var shareChat: Chat?
     @State private var navigateToChat = false
+    @State private var showReportSheet = false
+    @State private var showDeleteConfirm = false
 
     @Environment(\.openURL) private var openURL
 
@@ -89,15 +91,24 @@ struct PostCardView: View {
                 
                 Spacer()
                 
-                // Weather tap button
-                if forecastURL != nil {
-                    Button {
-                        if let url = forecastURL { openURL(url) }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.primary)
+                // Three dots menu
+                Menu {
+                    if post.userId == Auth.auth().currentUser?.uid {
+                        Button(role: .destructive) { showDeleteConfirm = true } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } else {
+                        Button { showReportSheet = true } label: {
+                            Label("Report", systemImage: "flag")
+                        }
+                        Button { savePost() } label: {
+                            Label("Save", systemImage: "bookmark")
+                        }
                     }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
                 }
             }
             .padding(.horizontal, 12)
@@ -158,6 +169,15 @@ struct PostCardView: View {
         .shadow(color: Color.black.opacity(0.1),
                 radius: 1, x: 0, y: 1)
         .sheet(isPresented: $showShareSheet) { shareSheet }
+        .sheet(isPresented: $showReportSheet) {
+            ReportSheetView(postId: post.id, isPresented: $showReportSheet)
+        }
+        .alert("Delete Post", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) { deletePost() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Are you sure you want to delete this post? This action cannot be undone.")
+        }
         .background { chatNavigationLink }
         .onAppear(perform: fetchAuthor)
     }
@@ -231,6 +251,26 @@ struct PostCardView: View {
                 NavigationLink(destination: ChatDetailView(chat: chat),
                                isActive: $navigateToChat) { EmptyView() }
                     .hidden()
+            }
+        }
+    }
+    
+    // MARK: - Post actions
+    private func savePost() {
+        // TODO: Implement save post functionality
+        print("Save post functionality to be implemented")
+    }
+    
+    private func deletePost() {
+        NetworkService.shared.deletePost(id: post.id) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    print("Post deleted successfully")
+                    // TODO: Update UI to remove the post
+                case .failure(let error):
+                    print("Failed to delete post: \(error.localizedDescription)")
+                }
             }
         }
     }

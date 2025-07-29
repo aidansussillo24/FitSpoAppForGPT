@@ -350,6 +350,9 @@ struct PostDetailView: View {
                         Label("Delete", systemImage: "trash")
                     }
                 } else {
+                    Button { savePost() } label: {
+                        Label("Save", systemImage: "bookmark")
+                    }
                     Button(role: .destructive) { showReportSheet = true } label: {
                         Label("Report", systemImage: "flag")
                     }
@@ -454,7 +457,12 @@ struct PostDetailView: View {
         if !isLiked { toggleLike() }
     }
 
-    // MARK: delete / report ------------------------------------
+    // MARK: delete / report / save ------------------------------
+    private func savePost() {
+        // TODO: Implement save post functionality
+        print("Save post functionality to be implemented")
+    }
+    
     private func performDelete() {
         isDeleting = true
         NetworkService.shared.deletePost(id: post.id) { res in
