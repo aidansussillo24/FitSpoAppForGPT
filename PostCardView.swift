@@ -7,6 +7,7 @@
 
 import SwiftUI
 import FirebaseFirestore
+import FirebaseAuth
 
 struct PostCardView: View {
     let post: Post
@@ -16,6 +17,9 @@ struct PostCardView: View {
     @State private var authorAvatarURL = ""
     @State private var isLoadingAuthor = true
     @State private var showHeart       = false
+    @State private var showShareSheet = false
+    @State private var shareChat: Chat?
+    @State private var navigateToChat = false
 
     @Environment(\.openURL) private var openURL
 
@@ -124,9 +128,7 @@ struct PostCardView: View {
                 .buttonStyle(.plain)
 
                 // Comment button
-                Button {
-                    // TODO: Implement comment action
-                } label: {
+                NavigationLink(destination: PostDetailView(post: post, initialShowComments: true)) {
                     Image(systemName: "message")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
@@ -134,9 +136,7 @@ struct PostCardView: View {
                 .buttonStyle(.plain)
 
                 // Share button
-                Button {
-                    // TODO: Implement share action
-                } label: {
+                Button { showShareSheet = true } label: {
                     Image(systemName: "paperplane")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
@@ -157,6 +157,8 @@ struct PostCardView: View {
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.1),
                 radius: 1, x: 0, y: 1)
+        .sheet(isPresented: $showShareSheet) { shareSheet }
+        .background { chatNavigationLink }
         .onAppear(perform: fetchAuthor)
     }
 
@@ -195,6 +197,42 @@ struct PostCardView: View {
         showHeart = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showHeart = false }
         if !post.isLiked { onLike() }
+    }
+    
+    // MARK: - Share functionality
+    private var shareSheet: some View {
+        ShareToUserView { uid in
+            showShareSheet = false
+            sharePost(to: uid)
+        }
+    }
+    
+    private func sharePost(to uid: String) {
+        guard let me = Auth.auth().currentUser?.uid else { return }
+        let pair = [me, uid].sorted()
+        NetworkService.shared.createChat(participants: pair) { res in
+            switch res {
+            case .success(let chat):
+                NetworkService.shared.sendPost(chatId: chat.id,
+                                               postId: post.id) { _ in }
+                DispatchQueue.main.async {
+                    shareChat = chat
+                    navigateToChat = true
+                }
+            case .failure(let err):
+                print("Chat creation error:", err.localizedDescription)
+            }
+        }
+    }
+    
+    private var chatNavigationLink: some View {
+        Group {
+            if let chat = shareChat {
+                NavigationLink(destination: ChatDetailView(chat: chat),
+                               isActive: $navigateToChat) { EmptyView() }
+                    .hidden()
+            }
+        }
     }
 }
 

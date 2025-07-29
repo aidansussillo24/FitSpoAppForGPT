@@ -20,18 +20,18 @@ struct MapFilterSheet: View {
                         .font(.system(size: 24, weight: .bold))
                         .foregroundColor(.primary)
                 }
-                .padding(.bottom, 20)
+                .padding(.bottom, 30)
                 
                 // Filter options
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 32) {
                         // Temperature filter
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Temperature")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.primary)
                             
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
                                 ForEach(MapFilter.TempBand.allCases, id: \.self) { temp in
                                     FilterChip(
                                         title: temp.displayName,
@@ -55,7 +55,7 @@ struct MapFilterSheet: View {
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.primary)
                             
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
                                 ForEach(MapFilter.Weather.allCases, id: \.self) { weather in
                                     FilterChip(
                                         title: weather.displayName,
@@ -79,7 +79,7 @@ struct MapFilterSheet: View {
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.primary)
                             
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
                                 ForEach(ExploreFilter.Season.allCases, id: \.self) { season in
                                     FilterChip(
                                         title: season.displayName,
@@ -97,7 +97,8 @@ struct MapFilterSheet: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 20)
                 }
                 
                 // Action buttons
@@ -124,8 +125,8 @@ struct MapFilterSheet: View {
                             .cornerRadius(12)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 30)
             }
             .navigationBarHidden(true)
         }

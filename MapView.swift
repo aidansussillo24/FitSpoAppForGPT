@@ -106,7 +106,8 @@ struct MapView: View {
             }
             .sheet(isPresented: $showFilters) {
                 MapFilterSheet(filter: $filter)
-                    .presentationDetents([.fraction(0.45)])
+                    .presentationDetents([.fraction(0.45), .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showSearch) {
                 MapSearchView(searchText: $searchText, onLocationSelected: { location in

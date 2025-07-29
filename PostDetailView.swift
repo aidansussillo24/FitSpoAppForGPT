@@ -68,7 +68,7 @@ struct PostDetailView: View {
     @State private var showUserProfile = false
     @State private var isLoadingMention = false
 
-    init(post: Post, rank: Int? = nil, navTitle: String = "Post") {
+    init(post: Post, rank: Int? = nil, navTitle: String = "Post", initialShowComments: Bool = false) {
         self.post = post
         self.rank = rank
         self.navTitle = navTitle
@@ -76,6 +76,7 @@ struct PostDetailView: View {
         _likesCount  = State(initialValue: post.likes)
         _outfitItems = State(initialValue: post.outfitItems ?? [])
         _outfitTags  = State(initialValue: post.outfitTags  ?? [])
+        _showComments = State(initialValue: initialShowComments)
     }
 
     // =========================================================
@@ -114,6 +115,7 @@ struct PostDetailView: View {
         }
         .animation(.easeInOut, value: showComments)
         .navigationTitle(navTitle)
+        .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar(showComments ? .hidden : .visible, for: .tabBar)
         .navigationBarTitleDisplayMode(.inline)
         .alert("Delete Post?", isPresented: $showDeleteConfirm,
@@ -172,6 +174,7 @@ struct PostDetailView: View {
                 NavigationLink(destination: ProfileView(userId: post.userId)) {
                     Text(isLoadingAuthor ? "Loading…" : authorName)
                         .font(.headline)
+                        .foregroundColor(.black)
                 }
                 if !locationName.isEmpty {
                     Text(locationName)
@@ -214,6 +217,7 @@ struct PostDetailView: View {
                         } label: {
                             Image(systemName: showPins ? "bag.fill" : "bag")
                                 .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.black)
                                 .padding(12)
                                 .background(.ultraThickMaterial, in: Circle())
                         }
@@ -296,15 +300,9 @@ struct PostDetailView: View {
             let size: CGFloat = 36
 
             ZStack {
-                // gradient background – “heat”
+                // Black and white theme
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(red: 1.0, green: 0.62, blue: 0.13),   // #FF9F21
-                                     Color(red: 1.0, green: 0.35, blue: 0.13)],  // #FF5921
-                            startPoint: .topLeading,
-                            endPoint:   .bottomTrailing)
-                    )
+                    .fill(Color.black)
 
                 // subtle flame watermark
                 Image(systemName: "flame.fill")
@@ -330,17 +328,21 @@ struct PostDetailView: View {
             Button(action: toggleLike) {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .font(.title2)
-                    .foregroundColor(isLiked ? .red : .primary)
+                    .foregroundColor(isLiked ? .red : .black)
             }
             Text("\(likesCount)").font(.subheadline.bold())
 
             Button { showComments = true } label: {
-                Image(systemName: "bubble.right").font(.title2)
+                Image(systemName: "bubble.right")
+                    .font(.title2)
+                    .foregroundColor(.black)
             }
             Text("\(commentCount)").font(.subheadline.bold())
 
             Button { showShareSheet = true } label: {
-                Image(systemName: "paperplane").font(.title2)
+                Image(systemName: "paperplane")
+                    .font(.title2)
+                    .foregroundColor(.black)
             }
             Menu {
                 if post.userId == Auth.auth().currentUser?.uid {
@@ -353,7 +355,9 @@ struct PostDetailView: View {
                     }
                 }
             } label: {
-                Image(systemName: "ellipsis").font(.title2)
+                Image(systemName: "ellipsis")
+                    .font(.title2)
+                    .foregroundColor(.black)
             }
             Spacer()
         }
@@ -366,6 +370,7 @@ struct PostDetailView: View {
             NavigationLink(destination: ProfileView(userId: post.userId)) {
                 Text(isLoadingAuthor ? "Loading…" : authorName)
                     .fontWeight(.semibold)
+                    .foregroundColor(.black)
             }
             ClickableHashtagText(text: post.caption) { hashtag in
                 handleHashtagTap(hashtag)
@@ -391,13 +396,15 @@ struct PostDetailView: View {
                     if case .success(let img) = phase {
                         img.resizable().scaledToFill()
                     } else {
-                        Image(systemName: "person.crop.circle.fill").resizable()
+                        Image(systemName: "person.crop.circle.fill")
+                            .resizable()
+                            .foregroundColor(.black)
                     }
                 }
             } else {
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()
-                    .foregroundColor(.gray)
+                    .foregroundColor(.black)
             }
         }
         .frame(width: 40, height: 40)

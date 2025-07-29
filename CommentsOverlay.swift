@@ -145,7 +145,7 @@ struct CommentsOverlay: View {
                     VStack(spacing: 4) {
                         Button("Save") { commitEdit(id: editingId) }
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.blue)
+                            .foregroundColor(.black)
                         Button("Cancel") { cancelEdit() }
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.red)
@@ -178,7 +178,7 @@ struct CommentsOverlay: View {
                     } label: {
                         Text("Post")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .blue)
+                            .foregroundColor(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .black)
                     }
                     .disabled(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
